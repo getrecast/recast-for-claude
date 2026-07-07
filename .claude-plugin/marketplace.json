@@ -1,0 +1,25 @@
+{
+  "name": "recast",
+  "owner": {
+    "name": "Recast Engineering",
+    "email": "support@getrecast.com"
+  },
+  "metadata": {
+    "description": "Official Recast marketplace for Claude Code.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "recast",
+      "source": "./plugins/recast",
+      "description": "Work with the Recast marketing-mix-modeling platform from Claude Code.",
+      "keywords": [
+        "recast",
+        "mmm",
+        "marketing-mix-modeling",
+        "mcp",
+        "api"
+      ]
+    }
+  ]
+}

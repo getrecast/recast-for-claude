@@ -1,0 +1,9 @@
+{
+  "recast": {
+    "type": "http",
+    "url": "https://mcp.getrecast.com/mcp",
+    "headers": {
+      "X-Recast-PAT": "${RECAST_PAT}"
+    }
+  }
+}

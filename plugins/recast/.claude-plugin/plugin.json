@@ -1,0 +1,9 @@
+{
+  "name": "recast",
+  "description": "Work with the Recast marketing-mix-modeling platform from Claude Code.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Recast Engineering",
+    "email": "support@getrecast.com"
+  }
+}
