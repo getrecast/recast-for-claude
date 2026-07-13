@@ -4,8 +4,9 @@ Recast for Claude Code — MCP tools backed by the hosted Recast MCP server, plu
 
 ## Prerequisites
 
-- A Recast account (accounts are provisioned by Recast — contact your Recast representative if you don't have one) and a Personal Access Token (PAT) — in the Recast app, open the account menu (the nav-bar dropdown labeled with your email) and click "Generate API Token" (shown once — copy it immediately; regenerating revokes the previous token)
+- A Recast account (accounts are provisioned by Recast — contact your Recast representative if you don't have one)
 - Claude Code v2+ (remote MCP + plugin support)
+- *(Only for the API skills)* a Personal Access Token (PAT) — in the Recast app, open the account menu (the nav-bar dropdown labeled with your email) and click "Generate API Token" (shown once — copy it immediately; regenerating revokes the previous token). The MCP tools don't need this; see step 2.
 
 ## Setup
 
@@ -16,7 +17,7 @@ Recast for Claude Code — MCP tools backed by the hosted Recast MCP server, plu
    claude plugin install recast@recast
    ```
 
-2. Set your PAT in `~/.claude/settings.json` (create the file if it doesn't exist) under the top-level `env` key, merging with any existing contents:
+2. *(Only if you'll use the API skills)* set your PAT in `~/.claude/settings.json` (create the file if it doesn't exist) under the top-level `env` key, merging with any existing contents. The MCP tools authenticate via OAuth and need no token here:
 
    ```json
    {
@@ -26,7 +27,7 @@ Recast for Claude Code — MCP tools backed by the hosted Recast MCP server, plu
    }
    ```
 
-   This reaches every way Claude Code runs — terminal, desktop app, and IDE extensions. A shell-profile `export RECAST_PAT=<your-pat>` works too, but only for sessions launched from a terminal: the desktop app never reads `~/.zshrc`, so the variable silently won't resolve there. Add the shell export *in addition* if you want to run skill-generated scripts outside Claude Code.
+   This reaches every way Claude Code runs. A shell-profile `export RECAST_PAT=<your-pat>` works too, but only for sessions launched from a terminal.
 
 3. Restart Claude Code (fully quit the desktop app if you use it). On first use of a Recast MCP tool, a browser window opens for OAuth sign-in with your Recast account — complete it once.
 
@@ -49,12 +50,14 @@ Invoked under the `recast:` namespace, or triggered automatically when Claude de
 
 ## MCP server
 
-The plugin connects to the hosted Recast MCP server at `https://mcp.getrecast.com/mcp`. Your PAT is sent per-request as the `X-Recast-PAT` header (expanded from `$RECAST_PAT`); authentication to the endpoint itself is OAuth via your Recast account, handled by Claude Code.
+The plugin connects to the hosted Recast MCP server at `https://mcp.getrecast.com/mcp`. Authentication is OAuth via your Recast account, handled by Claude Code — on first use of a Recast tool a browser window opens to sign in. The MCP server needs **no PAT or token**; `RECAST_PAT` is only used by the API skills (Reporter/Forecaster/Optimizer) for the code they generate.
 
 ## Troubleshooting
 
-- **Tools fail with auth/401 errors from the Recast API:** `RECAST_PAT` is unset, mistyped, or expired. Check the `env` block in `~/.claude/settings.json` (or `echo $RECAST_PAT` if you used a shell export), and verify the token in the Recast app.
+- **MCP tools fail with auth/401 / "unauthorized":** the OAuth session expired or was never established (this is *not* a PAT problem). Reconnect the `recast` MCP server in your client to re-run the sign-in, then restart Claude Code.
+- **Claude asks for a `RECAST_PAT` while you're using the MCP tools:** the MCP server didn't load, so Claude fell back to the API skills (which do need a PAT). Fix the MCP connection — reinstall the plugin and restart, then confirm via `/mcp` — rather than supplying a PAT. Opening a fresh chat once the server connects often clears this.
+- **API-skill scripts fail with auth/401:** `RECAST_PAT` is unset, mistyped, or expired. Check the `env` block in `~/.claude/settings.json` (or `echo $RECAST_PAT` if you used a shell export), and verify the token in the Recast app.
 - **Browser OAuth prompt reappears:** your session token expired — sign in again; this is expected occasionally.
-- **Works in the terminal but not the desktop app:** the desktop app doesn't inherit shell-profile environment variables — move the PAT into `~/.claude/settings.json` as shown in Setup, then fully quit and relaunch the app.
+- **API-skill scripts work in the terminal but not the desktop app:** the desktop app doesn't inherit shell-profile environment variables — move the PAT into `~/.claude/settings.json` as shown in Setup, then fully quit and relaunch the app.
 - **Desktop app settings UI shows the connector as "not connected" or doesn't list the MCP server:** the Customize/Connectors panels don't reliably reflect MCP status. Trust `/mcp` inside a session, or just invoke a Recast tool.
 - **`recast` server missing from `/mcp`:** reinstall the plugin and restart Claude Code.
