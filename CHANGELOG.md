@@ -3,6 +3,16 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] - 2026-07-16
+
+### Changed
+
+- **Optimizer skill: `lower_funnel_caps` gains `off` and `manual` options.**
+  `off` fully excludes a channel from the budget (previously only achievable
+  via an unsupported `capped`/cap-0 workaround). `manual` spends exactly the
+  uploaded budget with no cap. `custom_model_type` is now documented as
+  required (`"roi"` or `"cpa"`), not nullable.
+
 ## [1.0.1] - 2026-07-13
 
 ### Changed

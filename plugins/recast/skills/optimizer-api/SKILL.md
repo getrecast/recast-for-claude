@@ -131,7 +131,7 @@ Present results as: "With 75% confidence, you'll achieve at least X."
   "total_spend": "string integer (required if spend_scope is 'total')",
   "exact_spend": "string integer (required if spend_scope is 'upper_funnel')",
   "optimize_for_insample_effect": "'T' | 'F'",
-  "custom_model_type": "string | null",
+  "custom_model_type": "string — REQUIRED, cannot be blank or null. Use the client's model type: \"roi\" (revenue-type models) or \"cpa\" (cost-per-acquisition models)",
   "budget": "2D array of context variables or []",
   "constraints": [
     {
@@ -154,12 +154,26 @@ Present results as: "With 75% confidence, you'll achieve at least X."
       "limit_spend": "boolean | null",
       "lower_funnel_caps": {
         "channel_name": {
-          "option": "uncapped | capped | optimize",
-          "cap": "integer (required if capped)",
-          "min": "numeric (required if optimize)",
-          "max": "numeric (required if optimize)"
+          "option": "off | manual | uncapped | capped | optimize",
+          "cap": "string — set if capped (e.g. \"100000\"), else \"\"",
+          "min": "string — set if optimize, else \"0\"",
+          "max": "string — set if optimize, else \"\""
         }
       }
+      // ALL four keys must be present on every channel entry; unused fields
+      // are empty strings ("" — min defaults to "0"), and all values are
+      // STRINGS, not integers. Example of a valid entry:
+      //   "affiliates":  {"cap": "", "max": "", "min": "0", "option": "off"}
+      //   "sem_branded": {"cap": "", "max": "", "min": "0", "option": "manual"}
+      //
+      // Options:
+      //   off      — channel excluded entirely (use for a 0/0 constraint;
+      //              do NOT encode exclusion as capped with cap 0)
+      //   manual   — spend exactly what the uploaded budget provides
+      //              (use for LF channels with planned spend and no cap)
+      //   uncapped — no limit
+      //   capped   — total spend limited to `cap` over the period
+      //   optimize — optimizer chooses spend within [min, max]
     }
   ],
   "depvar_configurations": [
