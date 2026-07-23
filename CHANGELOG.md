@@ -3,6 +3,26 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-07-23
+
+### Added
+
+- **Plans skill.** Read-only access to Plans, versions, budgets, and the
+  forecasts/counterfactuals generated for a plan. Invoke with `/recast:plans-api`.
+
+### Changed
+
+- **Reporter skill: support for pre-rendered Insights dashboard reports.**
+  The reports list endpoint now accepts `include_prerendered=true` to
+  surface auto-generated reports backing the Insights dashboard (tagged
+  `prerendered: true`), alongside custom-created reports. Not every
+  `report_type` has a pre-rendered version.
+
+- **Forecaster skill: new ROI and spend fields.** Forecast results now include
+  `total_forecasted_spend`, `expected_blended_roi`, `expected_observed_paid_roi`,
+  and a redefined `expected_roi`, plus quantiles for each.
+  `paid_roi` is removed.
+
 ## [1.0.2] - 2026-07-16
 
 ### Changed

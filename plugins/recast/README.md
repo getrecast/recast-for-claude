@@ -1,6 +1,6 @@
 # Recast Plugin
 
-Recast for Claude Code — MCP tools backed by the hosted Recast MCP server, plus skills for the public Reporter, Forecaster, and Optimizer APIs.
+Recast for Claude Code — MCP tools backed by the hosted Recast MCP server, plus skills for the public Reporter, Forecaster, Optimizer, and Plans APIs.
 
 ## Prerequisites
 
@@ -47,6 +47,7 @@ Invoked under the `recast:` namespace, or triggered automatically when Claude de
 | Reporter API | `/recast:reporter-api` | Identifies the right report type from what you want to analyze, prompts for required inputs, generates code to create/poll/download CSV results |
 | Forecaster API | `/recast:forecaster-api` | Translates forecasting goals into Forecast / Spend Forecast API requests — predicts the outcomes of a known budget |
 | Optimizer API | `/recast:optimizer-api` | Translates optimization goals into Optimizer API requests (objectives, constraints, channel budgets, multi-KPI) — prescribes the budget to hit a goal |
+| Plans API | `/recast:plans-api` | Reads Plans, versions, budgets, and forecasts/counterfactuals — a read-only API; plans are created and edited in the UI |
 
 ## MCP server
 

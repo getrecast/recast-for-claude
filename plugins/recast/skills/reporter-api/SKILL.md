@@ -49,32 +49,32 @@ Use this to match the user's description to the correct `report_type`.
 
 ### Intent → report_type mapping
 
-| User says / wants | `report_type` | Required inputs besides `deployment_id` |
-|---|---|---|
-| "Channel contribution", "how much did each channel drive?", "attribution breakdown", "which channels are working?" | `compute_insights_overview` | `start_date`, `end_date` |
-| "Baseline", "organic sales", "intercept", "non-marketing contribution", "what would sales be without marketing?" | `compute_baseline_summary` | `start_date`, `end_date`, `include_spikes` |
-| "Time delay between spend and outcome", "adstock", "carryover", "shift curves", "how long before spend converts?" | `compare_shift_curves` | `channels` |
-| "Spend response curves", "saturation curves", "what happens at different spend levels?", "diminishing returns" | `compute_spend_response_curves` | `date`, `num_days`, `channels` |
-| "Compare two time periods", "before vs after", "period comparison", "how did performance change?" | `compare_time_periods` | `previous_start_date`, `previous_end_date`, `period_start_date`, `period_end_date` |
-| "Channel performance with grouping", "grouped ROI", "custom channel groups" | `compute_grouped_channel_summaries` | `start_date`, `end_date`, `channel_groups`, `include_lower_funnel_effects` |
-| "Fixed spend performance", "performance at a specific spend level", "what's the ROI at $X?" | `compute_fixed_spend_performance` | `start_date`, `end_date`, `channels`, `include_lower_funnel_effects`, `spend` |
-| "How much was spent in each channel?", "spend summary", "reconcile spend vs internal data" | `compute_spend_summary` | `start_date`, `end_date` |
-| "Spike effects", "promotion impact", "holiday lift", "pull-forward and pull-back" | `compute_spike_detail_summary` | *(none)* |
-| "Period summary", "in-period effects", "future returns from past spend", "comprehensive period breakdown" | `compute_period_summary` | `start_date`, `end_date` |
-| "Lower funnel details", "what drives branded search spend?", "upper-to-lower funnel waterfall" | `compute_lower_funnel_waterfall` | `start_date`, `end_date` |
-| "Upper funnel details", "how much of my ROI comes from lower funnel?", "indirect ROI" | `compute_upper_funnel_details` | `start_date`, `end_date`, `channels` |
-| "Context variables", "price effects", "brand awareness impact", "external factors on marketing effectiveness" | `compute_context_variable_summary` | `start_date`, `end_date` |
-| "In-sample model fit", "how well does the model fit the data?", "model diagnostics" | `compute_in_sample_model_fit` | `start_date`, `end_date` |
-| "Marketing vs baseline", "organic share vs marketing share", "how much does marketing move my KPI?" | `compute_marketing_vs_baseline` | `start_date`, `end_date` |
-| "Channel uncertainty", "why is the confidence interval wide?", "uncertainty drivers", "lack of signal" | `compute_prior_vs_posterior` | `start_date`, `end_date`, `channels` |
-| "Daily spend vs KPI", "channel correlations", "spend patterns", "are my channels correlated?" | `compute_daily_spend_vs_KPI` | `start_date`, `end_date`, `channels` |
-| "Share of spend vs share of effect", "over/underperforming channels over time", "efficiency trend" | `compute_share_of_spend_vs_effect` | `start_date`, `end_date`, `granularity` |
-| "ROI waterfall", "what's driving my ROI?", "decompose ROI", "why did my ROI change?" | `compute_roi_cpa_waterfall_plots` | `start_date`, `end_date`, `channels` |
-| "Backtest", "out-of-sample model performance", "holdout evaluation" | `compute_backtest_summaries` | *(none)* |
-| "Model configuration", "priors", "model settings", "export model parameters" | `compute_model_configuration` | *(none)* |
-| "Experiments", "experiment results", "test results" | `compute_experiments_summaries` | *(none)* |
-| "Clean data", "raw data export", "export input data" | `compute_clean_data` | *(none)* |
-| "Channel Uncertainty" | `compute_channel_uncertainty_drivers` | `start_date`, `end_date` |
+| User says / wants | `report_type` | Required inputs besides `deployment_id` | Pre-rendered? |
+|---|---|---|---|
+| "Channel contribution", "how much did each channel drive?", "attribution breakdown", "which channels are working?" | `compute_insights_overview` | `start_date`, `end_date` | Yes |
+| "Baseline", "organic sales", "intercept", "non-marketing contribution", "what would sales be without marketing?" | `compute_baseline_summary` | `start_date`, `end_date`, `include_spikes` | Yes |
+| "Time delay between spend and outcome", "adstock", "carryover", "shift curves", "how long before spend converts?" | `compare_shift_curves` | `channels` | Yes |
+| "Spend response curves", "saturation curves", "what happens at different spend levels?", "diminishing returns" | `compute_spend_response_curves` | `date`, `num_days`, `channels` | Yes |
+| "Compare two time periods", "before vs after", "period comparison", "how did performance change?" | `compare_time_periods` | `previous_start_date`, `previous_end_date`, `period_start_date`, `period_end_date` | No |
+| "Channel performance with grouping", "grouped ROI", "custom channel groups" | `compute_grouped_channel_summaries` | `start_date`, `end_date`, `channel_groups`, `include_lower_funnel_effects` | Yes |
+| "Fixed spend performance", "performance at a specific spend level", "what's the ROI at $X?" | `compute_fixed_spend_performance` | `start_date`, `end_date`, `channels`, `include_lower_funnel_effects`, `spend` | No |
+| "How much was spent in each channel?", "spend summary", "reconcile spend vs internal data" | `compute_spend_summary` | `start_date`, `end_date` | Yes |
+| "Spike effects", "promotion impact", "holiday lift", "pull-forward and pull-back" | `compute_spike_detail_summary` | *(none)* | Yes |
+| "Period summary", "in-period effects", "future returns from past spend", "comprehensive period breakdown" | `compute_period_summary` | `start_date`, `end_date` | No |
+| "Lower funnel details", "what drives branded search spend?", "upper-to-lower funnel waterfall" | `compute_lower_funnel_waterfall` | `start_date`, `end_date` | Yes |
+| "Upper funnel details", "how much of my ROI comes from lower funnel?", "indirect ROI" | `compute_upper_funnel_details` | `start_date`, `end_date`, `channels` | No |
+| "Context variables", "price effects", "brand awareness impact", "external factors on marketing effectiveness" | `compute_context_variable_summary` | `start_date`, `end_date` | Yes |
+| "In-sample model fit", "how well does the model fit the data?", "model diagnostics" | `compute_in_sample_model_fit` | `start_date`, `end_date` | No |
+| "Marketing vs baseline", "organic share vs marketing share", "how much does marketing move my KPI?" | `compute_marketing_vs_baseline` | `start_date`, `end_date` | No |
+| "Channel uncertainty", "why is the confidence interval wide?", "uncertainty drivers", "lack of signal" | `compute_prior_vs_posterior` | `start_date`, `end_date`, `channels` | Yes |
+| "Daily spend vs KPI", "channel correlations", "spend patterns", "are my channels correlated?" | `compute_daily_spend_vs_KPI` | `start_date`, `end_date`, `channels` | No |
+| "Share of spend vs share of effect", "over/underperforming channels over time", "efficiency trend" | `compute_share_of_spend_vs_effect` | `start_date`, `end_date`, `granularity` | No |
+| "ROI waterfall", "what's driving my ROI?", "decompose ROI", "why did my ROI change?" | `compute_roi_cpa_waterfall_plots` | `start_date`, `end_date`, `channels` | No |
+| "Backtest", "out-of-sample model performance", "holdout evaluation" | `compute_backtest_summaries` | *(none)* | Yes |
+| "Model configuration", "priors", "model settings", "export model parameters" | `compute_model_configuration` | *(none)* | Yes |
+| "Experiments", "experiment results", "test results" | `compute_experiments_summaries` | *(none)* | Yes |
+| "Clean data", "raw data export", "export input data" | `compute_clean_data` | *(none)* | Yes |
+| "Channel Uncertainty" | `compute_channel_uncertainty_drivers` | `start_date`, `end_date` | No |
 
 ---
 
@@ -368,6 +368,45 @@ The create endpoint wraps the form:
 ---
 
 ## Recommended Workflow
+
+### Step 0 (optional): Check for a pre-rendered report first
+
+Every page in the Insights dashboard is a pre-rendered version of a Reporter
+report, run automatically on a fixed schedule (whenever the model refreshes).
+Only some `report_type`s have a pre-rendered version — see the
+"Pre-rendered?" column in the Report Type Reference table.
+
+For the five report types that take no inputs besides `deployment_id`
+(`compute_backtest_summaries`, `compute_experiments_summaries`,
+`compute_clean_data`, `compute_model_configuration`,
+`compute_spike_detail_summary`), the pre-rendered and a custom-created
+version are always identical — there's nothing that could differ — so it's
+always safe to use the pre-rendered one instead of creating a new report.
+
+For the other pre-rendered-eligible report types (e.g.
+`compute_insights_overview`, `compute_baseline_summary`), the pre-rendered
+version uses fixed inputs tied to the dashboard (e.g. a standard date range)
+that may not match what the client actually wants. Check the report's
+`form` field after fetching it to confirm the inputs match before treating
+it as satisfying the client's request — otherwise create a custom report
+instead.
+
+```python
+resp = requests.get(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/reports",
+    headers=HEADERS,
+    params={"include_prerendered": "true"},
+).json()
+prerendered = [
+    r for r in resp["data"]
+    if r.get("prerendered") and r["report_type"] == "compute_insights_overview"
+]
+```
+
+Without `include_prerendered=true`, the list endpoint only returns the
+client's own custom-created reports — pre-rendered ones are hidden by
+default. A matching pre-rendered report's `id` can be passed straight to the
+show endpoint like any other report, then downloaded normally (Step 5).
 
 ### Step 1: Get the deployment_id (if needed)
 
@@ -666,6 +705,8 @@ assert resp.status_code == 201, f"Failed: {resp.text}"
 
 14. **Invalid date format** — All dates must be `YYYY-MM-DD`. Other formats (e.g., `MM-DD-YYYY`) return 422.
 
+15. **Assuming every `report_type` has a pre-rendered version** — only the types marked "Yes" in the Report Type Reference table's "Pre-rendered?" column do. Check the `prerendered`-filtered list rather than assuming one exists for an arbitrary report_type.
+
 ---
 
 ## Code Generation Rules
@@ -722,6 +763,7 @@ assert resp.status_code == 201, f"Failed: {resp.text}"
       "name": "string",
       "report_type": "string",
       "status": "string",
+      "prerendered": false,
       "created_at": "ISO8601",
       "updated_at": "ISO8601"
     }
@@ -732,6 +774,8 @@ assert resp.status_code == 201, f"Failed: {resp.text}"
 
 Filter by type: `GET /v1/clients/{client_slug}/reports?report_type=compute_insights_overview`
 
+Include pre-rendered reports (excluded by default): `GET /v1/clients/{client_slug}/reports?include_prerendered=true`. Pre-rendered reports (the ones backing the Insights dashboard) are tagged `"prerendered": true`; the client's own custom-created reports are `"prerendered": false`.
+
 ### Show response structure (no wrapper)
 
 ```json
@@ -740,6 +784,7 @@ Filter by type: `GET /v1/clients/{client_slug}/reports?report_type=compute_insig
   "name": "string",
   "report_type": "string",
   "status": "ready | processing | success | error",
+  "prerendered": false,
   "form": { "deployment_id": 5716, "report_type": "...", "..." : "..." },
   "created_at": "ISO8601",
   "updated_at": "ISO8601",

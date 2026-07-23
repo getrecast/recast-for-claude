@@ -95,7 +95,7 @@ Ask the client these questions naturally (one or two at a time):
 - **Constraints** (for Spend Forecast): Total spend? Per-channel targets? Date range?
 - **Scale**: Single run or looping over multiple variations?
 - **Output**: What results do they care about?
-  - For Forecast: expected_outcome, expected_roi, paid_roi, CSV downloads (channel_summary, daily predictions)
+  - For Forecast: expected_outcome, total_forecasted_spend, expected_blended_roi, expected_observed_paid_roi, expected_roi (each with a `_quantiles` companion — see Forecast results below), CSV downloads (channel_summary, daily predictions)
   - For Spend Forecast: the generated daily budget (returned as a 2D array in `results.budget`). You may need to trim results to a particular date range they care about.
 
 Don't ask about coding language. If they specify one, use it. Otherwise use Python.
@@ -230,9 +230,15 @@ When the forecast completes (`status: "success"`), the show response includes `r
   "results": [
     {
       "depvars": [{ "name": "revenue", "deployment_id": 456, "weight": 1.0 }],
-      "expected_outcome": 5234567.89,
-      "expected_roi": 3.45,
-      "paid_roi": 2.89,
+      "expected_outcome": 32148244.0,
+      "expected_outcome_quantiles": { "median": 32161694.0, "p25": 31830828.0, "p75": 32538352.0 },
+      "total_forecasted_spend": 2654336.71,
+      "expected_blended_roi": 12.11,
+      "expected_blended_roi_quantiles": { "median": 12.12, "p25": 11.99, "p75": 12.26 },
+      "expected_observed_paid_roi": 6.11,
+      "expected_observed_paid_roi_quantiles": { "median": 6.09, "p25": 5.94, "p75": 6.28 },
+      "expected_roi": 6.12,
+      "expected_roi_quantiles": { "median": 6.08, "p25": 5.94, "p75": 6.27 },
       "downloads": [
         { "description": "Channel Summary", "key": "channel_summary" },
         { "description": "Daily Forecast", "key": "daily_forecast" }
@@ -241,6 +247,18 @@ When the forecast completes (`status: "success"`), the show response includes `r
   ]
 }
 ```
+
+**ROI and spend fields:**
+
+| Field | Meaning |
+|---|---|
+| `expected_outcome` | The forecasted KPI total over the forecast window. Unambiguous. |
+| `total_forecasted_spend` | Total spend across the forecast window. |
+| `expected_blended_roi` | ROI blended across channels/depvars, computed over the forecast window only. **This is what `expected_roi` used to mean** before this field existed — if you see older code or examples checking `expected_roi` and expecting a windowed, blended number, that's now `expected_blended_roi`. |
+| `expected_observed_paid_roi` | Paid ROI using only the outcome *observed within the forecast window*. Replaces the old `paid_roi` field, which no longer exists. |
+| `expected_roi` | The **paid** ROI of the forecasted spend — same paid basis as `expected_observed_paid_roi`, not blended with baseline/organic — but counting outcome the spend causes **regardless of whether it's realized during or after the forecast window** (e.g. adstock/carryover effects that haven't fully played out by `end_date`). The two paid-ROI fields differ only in *time window counted*, not in what's being measured. Don't confuse either with `expected_blended_roi`, which blends in baseline/organic effects and is windowed only. |
+
+Each of these four fields also has a companion `_quantiles` object shaped `{"median": number, "p25": number, "p75": number}`, giving an uncertainty range around the point estimate. The point estimate and `_quantiles.median` aren't necessarily identical.
 
 Download CSVs with:
 ```
@@ -445,7 +463,7 @@ The budget is a 2D array: first row is headers (`date` + channel names), subsequ
 |---|---|
 | "What revenue will this budget produce?" | POST /forecasts with their budget |
 | "I have a CSV with daily spend" | Read CSV, convert to 2D array, POST /forecasts |
-| "What's my ROI for this plan?" | POST /forecasts, check `expected_roi` in results |
+| "What's my ROI for this plan?" | POST /forecasts. If they mean total ROI including outcome realized after the window, use `expected_roi`; if they mean ROI within the forecast window only (blended across channels), use `expected_blended_roi` |
 | "Compare two budget scenarios" | POST two forecasts with different budgets, compare results |
 | "What if I add a sale event?" | Add spikes to depvar_configurations |
 | "What's the incremental impact?" | Look at the channel summary download and summarize Impact |
@@ -679,6 +697,8 @@ for spend in spend_levels:
 13. **Starting a forecast from an arbitrary future date** — Forecast budgets must start on `deployment.end_date + 1` (the day after the model's last historical date). You cannot pick a random start date like "next Monday." Always check the Deployments endpoint first to determine the valid start date. (Spend Forecasts do not have this restriction.)
 
 14. **Not checking the Deployments endpoint first** — The Deployments endpoint provides the model's date range, valid channel names, context variable defaults, and spike names. Skipping this step leads to invalid dates, wrong channel names, and missing context variables.
+
+15. **Confusing `expected_roi` with `expected_blended_roi`, or with `expected_observed_paid_roi`** — `expected_roi` used to mean blended, windowed ROI (that's `expected_blended_roi` now); `paid_roi` was the old paid-only figure (replaced by `expected_observed_paid_roi`). Today, `expected_roi` and `expected_observed_paid_roi` are both **paid** ROI (not blended with baseline/organic) — they differ only in time window: `expected_observed_paid_roi` counts outcome observed within the forecast window only, `expected_roi` counts all outcome the spend causes whether it lands during or after the window. `expected_blended_roi` is windowed and blended. `total_forecasted_spend` was added alongside all of this. If you see older code or examples using `paid_roi`, or treating `expected_roi` as a windowed number, they're stale.
 
 ---
 
