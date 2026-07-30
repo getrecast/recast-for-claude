@@ -3,6 +3,15 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-07-30
+
+### Added
+
+- **Plans skill: spend adherence endpoints.** Read planned vs. actual spend
+  per channel for a plan version - the app's Adherence section - via the new
+  `/plans/{plan_id}/adherence` endpoints (list, show, CSV
+  downloads).
+
 ## [1.1.0] - 2026-07-23
 
 ### Added

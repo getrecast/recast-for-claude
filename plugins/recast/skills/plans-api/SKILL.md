@@ -1,11 +1,11 @@
 ---
 name: plans-api
-description: Use when reading Recast Plans programmatically — "list my plans", "get a plan's budget", "pull a plan's forecast", "what changed between these two plan versions", "get counterfactual forecasts for this plan". Translates plan-reading goals into API requests for retrieving plans, versions, budgets, and forecasts/counterfactuals. This is read-only — plans are created and edited in the UI, not via this API.
+description: Use when reading Recast Plans programmatically — "list my plans", "get a plan's budget", "pull a plan's forecast", "what changed between these two plan versions", "get counterfactual forecasts for this plan", "am I sticking to my plan's budget", "planned vs actual spend". Translates plan-reading goals into API requests for retrieving plans, versions, budgets, forecasts/counterfactuals, and spend adherence. This is read-only — plans are created and edited in the UI, not via this API.
 ---
 
 # Recast Plans API — Reading Plan Configuration and Budgets
 
-You are helping a Recast client read data out of their **Plans** (the Plans tab of the app) programmatically. Unlike the Optimizer, Forecaster, and Reporter APIs, **Plans has no create or update endpoint yet** — plans are built and edited in the UI. If the client wants to create a new Plan, point them to the UI (https://docs.getrecast.com/docs/plans); once it exists there, it's readable through this API. Your job is entirely about retrieval: finding the right plan, the right version, and the right data (config, budget, forecast) to pull.
+You are helping a Recast client read data out of their **Plans** (the Plans tab of the app) programmatically. Unlike the Optimizer, Forecaster, and Reporter APIs, **Plans has no create or update endpoint yet** — plans are built and edited in the UI. If the client wants to create a new Plan, point them to the UI (https://docs.getrecast.com/docs/plans); once it exists there, it's readable through this API. Your job is entirely about retrieval: finding the right plan, the right version, and the right data (config, budget, forecast, adherence) to pull.
 
 **Base URL:** `https://api.getrecast.com`
 **All endpoints are under** `/v1/clients/{client_slug}/plans`.
@@ -25,6 +25,7 @@ Ask the client what they're trying to get, naturally (one or two at a time):
   - The actual daily numbers → version budget (CSV)
   - How the plan is forecasted to perform going forward → the plan's regular forecast (`altcast_type: null`)
   - How the current model retroactively evaluates the plan's budget vs. what was actually spent, over days that have already elapsed → counterfactuals (`altcast_type: "planned"` / `"actuals"`)
+  - Whether the plan is being followed — planned vs. actual **spend** per channel → adherence. Adherence compares spend *inputs*; counterfactuals compare modeled *outcomes*. "Am I on budget?" is adherence; "what did going off-plan cost me?" is counterfactuals. Clients often ask the second meaning the first.
 
 Don't ask about coding language. If they specify one, use it. Otherwise use Python.
 
@@ -55,6 +56,7 @@ Write a single, self-contained script following the Code Generation Rules below.
 | **compatible_kpis / incompatible_kpis** | Which KPIs this version's inputs can and can't forecast. A KPI is incompatible when the plan is missing a channel/spike/contextual variable the model needs. |
 | **Counterfactual / altcast_type** | A *retroactive* re-forecast of already-elapsed (in-sample) days, using the **current/latest model** rather than whatever model existed at the time — not a forward-looking prediction. Not a single comparison object either — two separate ordinary Forecast results, distinguished by `altcast_type`: `null` (the plan's regular, forward-looking forecast), `"planned"` (what the current model predicts the plan's **originally specified budget** would have produced over those historical days), or `"actuals"` (what the current model predicts the **actual spend** that occurred would have produced). No combined "planned vs. actual" payload; diffing the two is a client-side exercise. |
 | **Recommendations** | Suggested budget reallocations to improve a forecasted outcome, at Conservative / Moderate / Aggressive risk levels. Available on all Forecasts associated with a Plan (see the forecaster-api skill for the `run_recommendations` flag). |
+| **Adherence** | Planned vs. actual **spend** per channel for one plan version — the app's Adherence section. Input comparison only: no modeling, no KPI, no ROI. A new report is created each time new spend data lands, and both sides are scoped to that report's `report_through_date` (so `planned_spend` is not the plan's whole-period total). |
 
 ---
 
@@ -118,6 +120,26 @@ The human-readable label field (e.g. `"v3"`) is named differently across endpoin
 
 **Critical limitation — these still don't match the UI's Counterfactual section.** The UI gets its numbers from a separate internal `compute_plan_counterfactual` request that this API does not expose, and there's no way to trim or reconcile a counterfactual forecast's response to match it. Tell the client this API's counterfactual forecasts are directionally useful but won't reproduce the UI's Counterfactual section numbers exactly. A dedicated endpoint for that summarized view may ship in the future.
 
+### Adherence — `GET /v1/clients/{client_slug}/plans/{plan_id}/adherence`
+
+Planned vs. actual **spend** per channel for a plan version. Nested under the plan like forecasts — no version-scoped path; filter with the `plan_version_id` query param.
+
+- `GET /plans/{plan_id}/adherence` — paginated list, `{"data": [...], "pagination": {...}}`
+- `GET /plans/{plan_id}/adherence/{id}` — one report, returned directly, no wrapper
+- `GET /plans/{plan_id}/adherence/{id}/downloads/{key}` — CSV
+
+Spend in, spend out: there are no KPI, outcome, or ROI fields. Nothing here goes through the model. If the client wants outcome consequences, that's the plan's forecasts/counterfactuals.
+
+What actually trips up code:
+
+- **`lf_option` exists on `lower_funnel` entries only** — there's no `funnel` field on an entry; the nesting carries that.
+- **There is no `nonspend_channels` key** — non-spend channels aren't served in this release.
+- **A new report is created per data refresh**, so a plan accumulates many across its versions. Filter by `plan_version_id` (optional query param), then take the most recent with `status == "success"` — don't trust `data[0]`.
+- **An empty index is a valid answer, not a failure** — 200 with empty `data` means no actual spend data exists for the plan's period yet. Normal for a `future` plan. Report it as "nothing yet"; don't raise or retry.
+- **`planned_spend` is `null` for lower funnel channels that weren't provided** (`lf_option` of `capped`/`uncapped`) — the plan never stated a figure, so there's no target. Expected output, not missing data, and not the same as `0`: coercing it turns those channels into fabricated overspends.
+- **Both sides are scoped to `report_through_date`**, so `actual_spend − planned_spend` is like-for-like. `planned_spend` is not the plan's whole-period total — that's `total_spend` on the version — so don't label it as the full budget.
+- **Downloads** are `all-channels-adherence` plus one `{channel-name}-adherence` per channel — *except* capped/uncapped lower funnel channels, which have no daily planned spend and therefore no file. Read `downloads[].key` off the show response rather than building keys from channel names.
+
 ---
 
 ## Response Envelope Reference
@@ -128,6 +150,9 @@ The human-readable label field (e.g. `"v3"`) is named differently across endpoin
 | `GET /plans/{plan_id}/versions` | `{"data": [...], "pagination": {...}}` |
 | `GET /plans/{plan_id}/versions/{id}` | Returned directly, no wrapper |
 | `GET /plans/{plan_id}/versions/{id}/budget` | CSV body, not JSON |
+| `GET /plans/{plan_id}/adherence` | `{"data": [...], "pagination": {...}}` |
+| `GET /plans/{plan_id}/adherence/{id}` | Returned directly, no wrapper |
+| `GET /plans/{plan_id}/adherence/{id}/downloads/{key}` | CSV body, not JSON |
 
 ---
 
@@ -272,6 +297,38 @@ This is a recent fix. Older responses / older code you might see referenced else
 
 **Each of the four fields above also has a companion `_quantiles` object** — `expected_outcome_quantiles`, `expected_blended_roi_quantiles`, `expected_observed_paid_roi_quantiles`, `expected_roi_quantiles` — each shaped `{"median": number, "p25": number, "p75": number}`. The point-estimate field (e.g. `expected_roi`) and its `_quantiles.median` aren't necessarily identical; use whichever the client actually wants (a single point estimate vs. an uncertainty range).
 
+### Adherence (list item and show response)
+
+List items carry `id` (integer — the adherence report's own id), `plan_version_id`, `plan_version_number`, `status` (`success` | `error`), `report_through_date` (`YYYY-MM-DD | null`), `created_at`, `updated_at`. As on the forecast endpoints the version label is `plan_version_number`, **not** `version_number`. The show response adds `plan_id` plus:
+
+```json
+{
+  "highlights": {
+    "total": { "planned_spend": "number | null", "actual_spend": "number | null" },
+    "spend_channels": {
+      "upper_funnel": [
+        {
+          "channel_name": "string",
+          "planned_spend": "number | null",
+          "actual_spend": "number | null"
+        }
+      ],
+      "lower_funnel": [
+        {
+          "channel_name": "string",
+          "lf_option": "uncapped | capped | manual",
+          "planned_spend": "number | null",
+          "actual_spend": "number | null"
+        }
+      ]
+    }
+  },
+  "downloads": [ { "description": "string", "key": "all-channels-adherence | {channel-name}-adherence" } ]
+}
+```
+
+`spend_channels` is a nested object — no `nonspend_channels`, and nothing in the response is modeled (no KPI, outcome, ROI, or quantiles).
+
 ---
 
 ## Translating Client Asks to API Calls
@@ -294,6 +351,10 @@ This is a recent fix. Older responses / older code you might see referenced else
 | "What's the impact of not sticking to my plan?" | `GET /plans/{plan_id}/forecasts?plan_version_id={version_id}&altcast_types=planned,actuals` — diff the two, but tell the client this won't match the UI's Counterfactual section exactly (see the limitation above) |
 | "Show me every forecast for this plan targeting Revenue" | `GET /plans/{plan_id}/forecasts?kpi_id={revenue_kpi_id}` |
 | "Show me every forecast tied to this specific plan version" | `GET /plans/{plan_id}/forecasts?plan_version_id={version_id}` |
+| "Am I on budget? / how much have we spent?" | `GET /plans/{plan_id}/adherence?plan_version_id={version_id}` → show the most recent successful report, read `highlights` |
+| "Which channels are over/under-spending?" | Same call → flatten `highlights.spend_channels.upper_funnel` + `.lower_funnel`, sort by `actual_spend − planned_spend`, skipping `null` planned values |
+| "Show me daily planned vs. actual for Meta" | Adherence show → `GET /plans/{plan_id}/adherence/{id}/downloads/meta-adherence`. Confirm the key is in `downloads` first — capped/uncapped lower funnel channels don't have one |
+| "How are my non-spend channels tracking?" | Not available — adherence covers spend channels only in this release |
 | "What's my Goal pacing on this plan?" | Not available — Goals are excluded from this API release entirely |
 
 ---
@@ -563,6 +624,50 @@ print(f"In-sample Forecast Error %:  {in_sample_forecast_error_pct}")
 
 This is a best-effort reconstruction, not a guaranteed match to the UI — it still doesn't call the UI's actual `compute_plan_counterfactual` request. The core metric calculations (the cusum technique for all three forecasts, the period-scoped spend summing, and the derived ROI/error formulas) were validated end-to-end against a live account and produced sane, self-consistent numbers. The deployment-matching candidate-selection logic above wasn't exercised in that same run (the forecasts were selected manually) — treat it as a reasonable first pass, not verified. The exact "In-sample Forecast Error" sign/denominator convention also hasn't been checked against the UI. Verify both against a real account with known UI values before treating this as fully authoritative.
 
+### Scenario 7: Check spend adherence for a plan version
+
+```python
+reports = requests.get(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan['id']}/adherence",
+    headers=HEADERS,
+    params={"plan_version_id": version_id},
+).json()["data"]
+
+# A new report lands with each data refresh, so take the most recent successful
+# one. An empty list is valid: no actual spend data for this period yet.
+latest = next(
+    (r for r in sorted(reports, key=lambda r: r["created_at"], reverse=True)
+     if r["status"] == "success"),
+    None,
+)
+if latest is None:
+    raise SystemExit("No completed adherence report for this plan version yet.")
+
+detail = requests.get(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan['id']}/adherence/{latest['id']}",
+    headers=HEADERS,
+).json()
+
+h = detail["highlights"]
+print(f"Through {detail['report_through_date']}: "
+      f"planned={h['total']['planned_spend']}, actual={h['total']['actual_spend']}")
+
+# spend_channels is an object of upper_funnel / lower_funnel lists, not an array.
+for funnel, channels in h["spend_channels"].items():
+    for c in channels:
+        if c["planned_spend"] is None:  # lower funnel, not provided — actual only, never treat as 0
+            print(f"[{funnel}] {c['channel_name']}: actual={c['actual_spend']} (no planned spend)")
+        else:
+            delta = (c["actual_spend"] or 0) - c["planned_spend"]
+            print(f"[{funnel}] {c['channel_name']}: planned={c['planned_spend']}, "
+                  f"actual={c['actual_spend']}, delta={delta}")
+
+for d in detail["downloads"]:  # all-channels-adherence + {channel-name}-adherence; read, don't derive
+    print(f"{d['key']} — {d['description']}")
+```
+
+Both sides are scoped to `report_through_date`, so these deltas are like-for-like. Label them as spend through that date, not as plan totals.
+
 ---
 
 ## Common Mistakes to Avoid
@@ -595,7 +700,9 @@ This is a best-effort reconstruction, not a guaranteed match to the UI — it st
 
 14. **Assuming `start_date`/`end_date` bound the forecast's entire daily output** — They don't, and the gap works in opposite directions depending on the forecast kind. A regular forecast's daily output can extend *earlier* than `start_date` (those dates are actuals, not forecast). A "planned" counterfactual's daily output extends *later* than `end_date` (that continuation is a regular forward forecast of the planned budget). Only the actuals counterfactual has its daily output fully bounded by `start_date`/`end_date`.
 
-15. **Assuming a "planned" counterfactual's future segment matches the plan's regular forecast for the same dates** — It might not. The counterfactual's forward segment carries over prior spend from its own retroactive replay of the planned budget; the regular forecast carries over from real actual spend. Different upstream history can produce different downstream numbers.
+15. **Confusing adherence with counterfactuals** — Adherence compares planned vs. actual **spend** (an input audit, no modeling); counterfactuals compare modeled **outcomes**. "Are we on budget?" → adherence. "What did going off-plan cost us in revenue?" → counterfactuals. See the Adherence endpoint section for its other gotchas: empty index, `null` planned spend, no `nonspend_channels`.
+
+16. **Assuming a "planned" counterfactual's future segment matches the plan's regular forecast for the same dates** — It might not. The counterfactual's forward segment carries over prior spend from its own retroactive replay of the planned budget; the regular forecast carries over from real actual spend. Different upstream history can produce different downstream numbers.
 
 ---
 
@@ -646,6 +753,9 @@ This is a best-effort reconstruction, not a guaranteed match to the UI — it st
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/forecasts` | List forecasts across every version of the plan (filters: `kpi_id`, `plan_version_id`, `altcast_types`; counterfactuals have `altcast_type` of `"planned"` or `"actuals"`, regular forecasts have `altcast_type: null`) |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/forecasts/{forecast_id}` | Show a single plan-linked forecast |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/forecasts/{forecast_id}/downloads/{key}` | Download a CSV for one of the forecast's results |
+| GET | `/v1/clients/{client_slug}/plans/{plan_id}/adherence` | List adherence reports across every version of the plan (paginated; optional filter: `plan_version_id`) |
+| GET | `/v1/clients/{client_slug}/plans/{plan_id}/adherence/{id}` | Show one adherence report (`id` = the report's id): planned vs. actual spend highlights + downloads |
+| GET | `/v1/clients/{client_slug}/plans/{plan_id}/adherence/{id}/downloads/{key}` | Download an adherence CSV: `all-channels-adherence` or `{channel-name}-adherence` |
 
 Not yet released: goals.
 
@@ -695,10 +805,12 @@ Returned directly (no wrapper) — see PlanVersionDetail schema above.
 | "is this plan active?" | `status` (`current`/`future`/`expired`) |
 | "plan forecast", "counterfactual", "altcast" | `GET /plans/{plan_id}/forecasts` (filter with `plan_version_id` for one version) — counterfactuals are the entries with a non-null `altcast_type` |
 | "goal", "pacing", "success probability" | Not part of this API — Goals excluded from this release |
+| "adherence", "am I on budget", "spend to date", "planned vs actual spend" | `GET /plans/{plan_id}/adherence` (filter with `plan_version_id`) — `highlights` on the show response; `report_through_date` is how current it is |
 
 ## Resources
 
 If the client asks for something not covered here:
 - https://docs.getrecast.com/docs/plans
 - https://docs.getrecast.com/docs/forecast-the-performance-of-a-plan
+- https://docs.getrecast.com/docs/track-the-impact-of-a-plan#Adherence
 - https://docs.getrecast.com/docs/recommendations
