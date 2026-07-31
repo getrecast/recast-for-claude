@@ -3,6 +3,11 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] - 2026-07-31
+
+### Changed
+-**Updated the Optimizer skill** - Improved instructions for creating Optimizations from scratch and fixed documentation error regarding profit maximization target.
+
 ## [1.2.0] - 2026-07-30
 
 ### Added

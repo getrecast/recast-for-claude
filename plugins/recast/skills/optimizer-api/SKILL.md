@@ -13,8 +13,12 @@ You are helping a Recast client use the Optimizer API to run budget optimization
 
 Ask the client these questions naturally (one or two at a time):
 
-- **Starting point**: Do they have an existing optimization in the UI? If so, ask for the URL (`https://app.getrecast.com/clients/[client_slug]/optimizations/[id]`) or ID. The recommended workflow is to GET that optimization, extract the `form`, and modify it. This avoids constructing from scratch and ensures all settings are correct.
-- **What they want to change**: What part of the optimization do they want to modify? Common scenarios:
+- **Start fresh or update a previously-run optimization?** Establish this first.
+  - **Fresh question** ("what's the best mix for $2M in Q4?") → build a clean form. **Workflow A.**
+  - **Update a specific past run** ("same setup as the Q3 plan, but $500K more") → ask for the URL (`https://app.getrecast.com/clients/[client_slug]/optimizations/[id]`) or ID. **Workflow B.**
+
+  If they're answering a new question, do **not** start from an old optimization. Its bounds, caps, committed spend, and objective were authored for a different question. Prefer explicit instruction from the user vs inheriting implicit constraints from an irrelevant optimization.
+- **If Workflow B, what specifically changes?** Show all the existing assumptions, then walk the user part-by-part through what they might want to change. Some common scenarios:
   - Run variations with different **total spend** amounts
   - Change the **target** (goal value)
   - Shift the **date range** (constraint start/end dates)
@@ -35,8 +39,9 @@ Don't ask about coding language. If they specify one, use it. Otherwise use Pyth
 ### 2. Confirm understanding
 
 Before generating code, summarize:
-- The starting template (existing optimization ID, or building from scratch)
-- What fields will be modified
+- Which workflow: **A** (new optimization) or **B** (update an existing one, with its ID)
+- The goal, in the client's words, and the fields it maps to: `objective`, `target`, `confidence` or `strategy`, the date range, and the budget (`spend_scope` / `total_spend`)
+- Which channel constraints came from the client — and, for everything they didn't mention, that it's unconstrained (A) or carried over from the source optimization (B)
 - How many variations (if looping)
 - What output will be captured
 
@@ -59,7 +64,7 @@ The `objective` field determines what the optimizer tries to achieve. Getting th
 **Required form fields:**
 - `strategy`: `"conservative"`, `"base"`, or `"aggressive"` (replaces explicit contribution_margin)
 - `confidence`: set to `null`
-- `target`: set to `"0"` (no target needed — the optimizer finds the best allocation)
+- `target`: If using an ROI model, target represents the contribution margin to use when calculating profit after COGS. If using a CPA model, target represents the average value per conversion.
 
 **Key behaviors:**
 - This is the only objective that produces "textbook" results where marginal ROI equalizes across channels.
@@ -216,8 +221,9 @@ Each `channel_budgets` entry represents a group of channels with shared min/max 
 **Critical rules:**
 - `min` and `max` are **strings**, not numbers.
 - `min` must be <= `max`.
+- Channel max bounds cover only the optimized upper-funnel allocation. The total spend constraint applies to the whole budget — uploaded baseline + optimized allocation + model-predicted lower-funnel spend — so the sum of max values does not have to reach total_spend on its own. If the bounds are tighter than the total spend constraint, the optimizer doesn't error: total spend is a penalty term in the objective, so the run succeeds and simply lands below target.
 - Every channel that should be optimized MUST appear in a `channel_budgets` entry with finite min and max. Channels not listed are not optimized.
-- To group channels (e.g., "all Meta combined"), put them in the same `channel_budgets` entry. The optimizer allocates across them using learned historical ratios — do NOT manually split spend with invented percentages.
+- To bound a set of channels together (e.g., "all Meta combined"), put them in the same `channel_budgets` entry. The entry constrains their **combined** spend; the optimizer allocates between them within that bound. Don't split the client's stated total into per-channel entries using invented percentages — that removes the optimizer's freedom to choose the split.
 
 ### Channel settings
 
@@ -290,22 +296,94 @@ Spike names must match existing spike groups from the model. You cannot create n
 
 ---
 
-## Recommended Workflow (Template-Based)
+## Two Workflows — Decide Which One First
 
-The safest and most common approach: start from an existing optimization and modify it.
+| | **Workflow A — new optimization** | **Workflow B — update an existing one** |
+|---|---|---|
+| Use when | The client is asking a fresh question | The client names a specific past run to re-run differently |
+| Constraints | Only what the client asks for; everything else unconstrained | Carried over unchanged except what they named |
+| Built from | `/kpis` + `/deployments` | `GET /optimizations/{id}` → `form` |
 
-### Step 1: Get a template
+---
+
+## Workflow A: New optimization
+
+### Step A1: Gather scaffolding from the API
+
+You need real channel names, a live deployment, and valid spike names. Get them from the helper endpoints:
+
+```
+GET /v1/clients/{client_slug}/kpis           → pick the KPI
+GET /v1/clients/{client_slug}/kpis/{kpi_id}  → depvar_configurations (deployments + spikes),
+                                                ready to drop into the form
+GET /v1/clients/{client_slug}/deployments/{id}
+    ?extra_fields[]=drop_days&extra_fields[]=spend&extra_fields[]=default_budget
+                                             → channel labels, model_date, contextual
+                                                variable defaults, recommended drop_days
+```
+
+The deployment detail returns `upper_funnel_channel_labels`, `lower_funnel_channel_labels`, `contextual_variable_defaults`, and `model_date` — everything structural a form needs.
+
+`extra_fields` is an array parameter accepting `drop_days`, `spend`, and `default_budget`. Request `drop_days` — it gives you Recast's recommended spend frequency per channel, which is what you should put in the form rather than deriving or guessing one. 
+
+`spend` represents the deployment's historical spend and `default_budget` a business-as-usual budget. Neither of these are necessary for running an optimization.
+
+### Step A2: Get the goal fields from the client
+
+Ask for each of these and confirm the answer explicitly before building the form:
+
+- **What are they optimizing for?** → `objective`, plus `target` and either `confidence` (roi/depvar) or `strategy` (profit). See "Understanding the Optimizer: Objectives Deep Dive" above.
+- **Over what period?** → `constraints[].start_date` / `end_date`
+- **What's the budget, if any?** → `spend_scope`, with `total_spend` (all channels, including lower funnel) or `exact_spend` (upper funnel only). `spend_scope: ""` means no total budget constraint.
+
+### Step A3: Start unconstrained, then add only what the client asked for
+
+Put every upper funnel channel into a **single** `channel_budgets` entry with `min: "0"` and `max` set to a sentinel far above anything the client could spend — `"1000000000"` is fine. The entry bounds the group's combined spend and the optimizer allocates freely between the channels inside it, so this leaves the whole mix open without you having to invent a per-channel ceiling. The real budget is enforced by `total_spend` / `exact_spend`, not by these bounds.
+
+Channels absent from all constraints and the absent from the supplied budget are "turned off" and get **$0**, not "unlimited".
+
+This wide-open run is the "unconstrained recommendation" the docs recommend as a first step: https://docs.getrecast.com/docs/optimizer.md
+
+From here you need to apply the constraints that are reasonable for the client. This will likely require interacting with the client to understand their constraints. This could include:
+* hard limits like a contract minimum, a platform ceiling, a channel that's genuinely off
+* relative limits like "Use a business-as-usual budget as the starting point, and set all constraints to +/-20%"
+
+Two fields still carry over even in a clean build, because they describe how the model was fit rather than what the client prefers:
+
+- **`drop_days`** for channels that don't spend daily (TV, direct mail, podcasts). Take Recast's recommended values from `GET /deployments/{id}?extra_fields[]=drop_days` rather than deriving or guessing them, then confirm them with the client — they may want to assume a different cadence. Leaving a pulsed channel at `1` misaligns the optimizer with the trained saturation curve.
+- **`spikes`** — only names the model was trained with, from the KPI detail response.
+
+Skip to **Submit** below. The full field reference is in "Building a Form from Scratch."
+
+---
+
+## Workflow B: Change an existing optimization
+
+### Step B1: Get the form
 
 ```
 GET /v1/clients/{client_slug}/optimizations
 ```
-The list is inside `response["data"]` — find a successful optimization from that array. Then:
+The list is inside `response["data"]` — find the optimization the client named. Then:
 ```
 GET /v1/clients/{client_slug}/optimizations/{id}
 ```
-The show endpoint returns the object directly (no `data` wrapper). Extract `response["form"]` as your template.
+The show endpoint returns the object directly (no `data` wrapper). Extract `response["form"]`.
 
-### Step 2: Modify the form
+### Step B2: Report what it contains — before running anything
+
+The client asked for some things to change explicitly; everything else carries over. Show them what "everything else" is, and have them confirm.
+
+Lead with a link to the source optimization — `https://app.getrecast.com/clients/{client_slug}/optimizations/{id}` — plus its `name` and `created_at`, so they can open it and check the settings themselves. Then summarise, as a table rather than prose:
+
+- the goal fields being carried over: `objective`, `target`, `confidence`/`strategy`, `spend_scope`/`total_spend`, dates
+- each `channel_budgets` entry: `min`, `max`, channels — and which channels are absent from all constraints, since those get **$0**, not "unlimited"
+- any `lower_funnel_caps` option that isn't the `uncapped` default, and any non-zero `committed_spend`
+- whether `form["budget"]` is non-empty — if so, `min`/`max` are **relative to that uploaded budget**, not absolute ceilings
+
+If the bounds don't match what the client expects for the period they're now optimizing, that's a sign this is really a new question — switch to Workflow A.
+
+### Step B3: Modify the form
 
 Make targeted edits. Common modifications:
 
@@ -346,7 +424,11 @@ form["constraints"][0]["start_date"] = "2026-07-01"
 form["constraints"][0]["end_date"] = "2026-09-30"
 ```
 
-### Step 3: Submit
+---
+
+## Submit, Poll, Download (both workflows)
+
+### Submit
 
 ```python
 POST /v1/clients/{client_slug}/optimizations
@@ -358,14 +440,14 @@ POST /v1/clients/{client_slug}/optimizations
 }
 ```
 
-### Step 4: Poll for completion
+### Poll for completion
 
 ```
 GET /v1/clients/{client_slug}/optimizations/{new_id}
 ```
 Poll every 30 seconds until `status != "processing"`. Typical runtime: 1-6 minutes.
 
-### Step 5: Download results
+### Download results
 
 ```
 GET /v1/clients/{client_slug}/optimizations/{id}/downloads/{key}
@@ -375,8 +457,6 @@ Set `Accept: text/csv` header. Download keys come from `results[].downloads[].ke
 ---
 
 ## Building a Form from Scratch
-
-If the client has no existing optimization to template from, construct the form manually. This is harder and more error-prone — prefer the template workflow when possible.
 
 ### Minimum viable form
 
@@ -424,16 +504,12 @@ If the client has no existing optimization to template from, construct the form 
 }
 ```
 
-To get valid `deployment_id` values, use the KPIs endpoints:
-```
-GET /v1/clients/{client_slug}/kpis           → KPI list is in response["data"] (list endpoint)
-GET /v1/clients/{client_slug}/kpis/{kpi_id}  → KPI detail returned directly (show endpoint)
-```
-The KPI detail response includes `depvar_configurations` ready to drop into the form.
 
 ---
 
 ## Common Scenarios with Full Examples
+
+These all assume **Workflow B** — a named existing optimization, varied along one axis. For a new question, build the form per Workflow A instead.
 
 ### Scenario 1: "Run 5 variations with different total spend"
 
@@ -491,6 +567,18 @@ form["total_spend"] = None
 
 ---
 
+## Reading a Constrained Result
+
+Constraints define the search space; the model only ranks within it. A constrained result answers "the best plan within the constraints," not necessarily "the unconstrained maximum." Sometimes the constraints can be quite binding.
+
+- **Check what binds.** Compare each channel's spend to its `min`/`max`. A channel at its `max` means the model wanted to spend more there and couldn't.
+- **Where binding changes the reading:** under `profit`, marginal returns equalize across channels that are *not* at a bound. So a low-marginal-cost channel sitting at its `max` while an expensive channel absorbs the remaining budget is the constraint deciding, not the model. This is the usual answer to "why is it funding conversion instead of awareness?"
+- **If most channels bind, the run is reporting the plan back to you.** Sum the `max` values: if that total is at or near `total_spend`, the allocation was largely determined before the optimizer ran.
+- Suggest to the user that they may want to re-run with very wide bounds (an "unconstrained recommendation") and compare the diff. See https://docs.getrecast.com/docs/optimizer.md
+- **Widening bounds has a limit.** Raising a `max` well above a channel's historical spend, or activating a channel with little spend history, moves the response curve into extrapolation. Expect much wider intervals and say so.
+
+---
+
 ## Common Mistakes to Avoid
 
 1. **Using numbers instead of strings for min/max/target/confidence/total_spend** — The form uses string types for these fields. `"300000"` not `300000`.
@@ -505,7 +593,7 @@ form["total_spend"] = None
 
 6. **Not including all channels in channel_budgets** — Only channels that appear in a `channel_budgets` entry get optimized. Missing channels are excluded from optimization entirely.
 
-7. **Manually splitting grouped channel budgets** — When grouping channels (e.g., all Meta), put them in one `channel_budgets` entry with combined min/max. The optimizer uses learned historical ratios to split. Don't invent 80/20 or 60/40 splits.
+7. **Manually splitting a grouped channel budget** — When the client gives a bound for a set of channels (e.g., "Meta between $300K and $600K"), put them in one `channel_budgets` entry with that combined min/max and let the optimizer choose the split. Don't invent 80/20 or 60/40 per-channel entries — that substitutes your guess for the thing the optimizer is for.
 
 8. **Setting min > max on channel_budgets** — Returns a 422 validation error.
 
@@ -518,6 +606,10 @@ form["total_spend"] = None
 12. **Using spike names the model doesn't know** — Spike names must match existing spike groups from the model. Invalid names are silently ignored or cause errors.
 
 13. **Forgetting the `data` wrapper on list endpoints** — `GET /optimizations` and `GET /kpis` return `{"data": [...], "pagination": {...}}`. You must access `response["data"]` to get the array. Show endpoints (`GET /optimizations/{id}`, `GET /kpis/{id}`) return the object directly with no wrapper.
+
+14. **Cloning an old optimization to answer a new question** — use Workflow A unless the client named a specific past run to update.
+
+15. **Quoting one efficiency number without saying which it is** — `spend ÷ predicted KPI` is **blended** CPA/ROI: valid, and usually what a planner wants. But the predicted KPI includes baseline and spikes, which land without media, so blended is not the cost of the next acquisition. Label it "blended," and when the question is about *change* — comparing scenarios, or "what does more budget buy?" — report incremental or marginal cost alongside it, not blended alone.
 
 ---
 
@@ -560,6 +652,8 @@ form["total_spend"] = None
 | GET | `/v1/clients/{client_slug}/optimizations/{id}/downloads/{key}` | Download CSV (set `Accept: text/csv`) |
 | GET | `/v1/clients/{client_slug}/kpis` | List available KPIs |
 | GET | `/v1/clients/{client_slug}/kpis/{kpi_id}` | Get KPI detail with depvar_configurations |
+| GET | `/v1/clients/{client_slug}/deployments` | List deployments (narrow with `dashboard_slug`) |
+| GET | `/v1/clients/{client_slug}/deployments/{id}` | Deployment detail — channel labels, `model_date`, contextual variable defaults. `extra_fields[]` (array) adds `drop_days` (recommended spend frequency per channel), `spend` (history), `default_budget` (BAU budget) |
 
 ### Create request body
 
