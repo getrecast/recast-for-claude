@@ -454,6 +454,19 @@ GET /v1/clients/{client_slug}/optimizations/{id}/downloads/{key}
 ```
 Set `Accept: text/csv` header. Download keys come from `results[].downloads[].key`.
 
+### Save the result as a Plan
+
+Once an optimization finishes with `status: "success"`, it can be turned into a **Plan** — the thing clients actually track spend against in the Plans tab. This is the one supported way to create a plan via the API:
+
+```
+POST /v1/clients/{client_slug}/plans
+{ "form": { "optimization_id": 12345, "label": "Q3 Growth Plan" } }
+```
+
+Everything except `label` is derived from the optimization — budget, dates, spikes, and lower-funnel caps. Returns `201` with `{"id": "<plan uuid>"}`.
+
+Mention this when a client asks what to do with a result they like ("can I save this?", "how do I hold my team to this budget?"), or when they're clearly planning rather than exploring. Only successful optimizations work — a run that's still processing, errored, or was canceled is rejected with 422. **For the full endpoint contract, the read-back path, and the plan-side workflows (versions, budget CSV, forecasts, adherence), use the plans-api skill** — don't reimplement plan reading from here.
+
 ---
 
 ## Building a Form from Scratch
@@ -654,6 +667,7 @@ Constraints define the search space; the model only ranks within it. A constrain
 | GET | `/v1/clients/{client_slug}/kpis/{kpi_id}` | Get KPI detail with depvar_configurations |
 | GET | `/v1/clients/{client_slug}/deployments` | List deployments (narrow with `dashboard_slug`) |
 | GET | `/v1/clients/{client_slug}/deployments/{id}` | Deployment detail — channel labels, `model_date`, contextual variable defaults. `extra_fields[]` (array) adds `drop_days` (recommended spend frequency per channel), `spend` (history), `default_budget` (BAU budget) |
+| POST | `/v1/clients/{client_slug}/plans` | Save a **successful** optimization as a Plan (`form: {optimization_id, label}`). Not an optimizations endpoint — see the plans-api skill for everything plan-side |
 
 ### Create request body
 

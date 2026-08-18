@@ -1,11 +1,11 @@
 ---
 name: plans-api
-description: Use when reading Recast Plans programmatically — "list my plans", "get a plan's budget", "pull a plan's forecast", "what changed between these two plan versions", "get counterfactual forecasts for this plan", "am I sticking to my plan's budget", "planned vs actual spend". Translates plan-reading goals into API requests for retrieving plans, versions, budgets, forecasts/counterfactuals, and spend adherence. This is read-only — plans are created and edited in the UI, not via this API.
+description: Use when reading Recast Plans programmatically, or creating a plan from a successful Optimizer run — "list my plans", "get a plan's budget", "pull a plan's forecast", "what changed between these two plan versions", "get counterfactual forecasts for this plan", "am I sticking to my plan's budget", "planned vs actual spend", "turn this optimization into a plan", "save this optimization as a plan". Translates plan goals into API requests for retrieving plans, versions, budgets, forecasts/counterfactuals, and spend adherence, plus creating a new plan derived from a successful optimization. Plans still cannot be built from scratch or edited via this API — only read, or created directly from an optimization's results.
 ---
 
-# Recast Plans API — Reading Plan Configuration and Budgets
+# Recast Plans API — Reading Plan Configuration and Budgets, and Creating Plans from Optimizations
 
-You are helping a Recast client read data out of their **Plans** (the Plans tab of the app) programmatically. Unlike the Optimizer, Forecaster, and Reporter APIs, **Plans has no create or update endpoint yet** — plans are built and edited in the UI. If the client wants to create a new Plan, point them to the UI (https://docs.getrecast.com/docs/plans); once it exists there, it's readable through this API. Your job is entirely about retrieval: finding the right plan, the right version, and the right data (config, budget, forecast, adherence) to pull.
+You are helping a Recast client work with their **Plans** (the Plans tab of the app) programmatically. Plans can now be created via the API, but only one narrow way — **derived from a successful Optimizer run** (see Create below). There is still no way to build a plan from scratch or edit an existing one via the API; both of those still happen in the UI (https://docs.getrecast.com/docs/plans). Most of your job remains retrieval: finding the right plan, the right version, and the right data (config, budget, forecast, adherence) to pull. When the client already has a successful optimization and wants it turned into a plan, use the Create endpoint instead of pointing them to the UI.
 
 **Base URL:** `https://api.getrecast.com`
 **All endpoints are under** `/v1/clients/{client_slug}/plans`.
@@ -18,6 +18,7 @@ You are helping a Recast client read data out of their **Plans** (the Plans tab 
 
 Ask the client what they're trying to get, naturally (one or two at a time):
 
+- **Create or read?** If they have a successful optimization they want turned into a plan ("save this as a plan", "turn this optimization into a plan"), that's the Create endpoint — skip to Create below and just ask for the optimization (id, or a link/name you can resolve via the optimizer-api skill's list endpoint) and the label they want. Otherwise they're reading an existing plan: continue with the questions below.
 - **Which plan?** Do they know the plan's label (from the Plans tab) or its `id` (from the URL)? If not, they want to browse/filter the index.
 - **Which version?** Almost always the **primary version** (the live, current one) — this is included directly on each plan in the Index response, so a separate versions call is often unnecessary. Only fetch the versions list if they want history or a specific past version.
 - **What data?**
@@ -62,6 +63,8 @@ Write a single, self-contained script following the Code Generation Rules below.
 
 ## Recommended Workflow (Template-First)
 
+If the client is starting from a successful optimization they want turned into a plan, that's a single call — see Create below — not this workflow.
+
 The Index response already includes everything you usually need about the primary version — you rarely have to call the versions list at all.
 
 ```
@@ -79,6 +82,37 @@ GET /plans/{plan_id}/versions   → list all versions, ordered created_at descen
 ---
 
 ## The Endpoints
+
+### Create — `POST /v1/clients/{client_slug}/plans`
+
+Creates a plan from a **successful optimization's results** — not a general-purpose create. Everything about the plan except its `label` is derived server-side from the source optimization:
+
+- **Budget & dates** — the plan's `start_date`/`end_date` span the optimization's constraint dates, and the daily budget derives from the optimization's recommended spend allocation.
+- **Spikes** — carried over from the optimization's `depvar_configurations[].spikes`, but **only the dates that fall within the plan's own derived period.** A spike entirely outside that window (e.g. the optimization declared a spike from a different year than the plan's date range) is correctly dropped — that's expected scoping, not a bug.
+- **Lower-funnel channel caps** — derived from the optimization's constraints.
+
+Request body:
+```json
+{ "form": { "optimization_id": 1003941377, "label": "Q3 Growth Plan" } }
+```
+Both fields required. `optimization_id` is the source optimization's integer id (the Optimizer API's id space, not a plan UUID). `label` is the only value actually authored by the request — extra fields elsewhere in the form are not accepted and cannot override any derived value.
+
+Response (201) — only an id, no plan payload:
+```json
+{ "id": "uuid string" }
+```
+Read the created plan back the same way you'd read any plan: `GET /plans` (filter/scan for the label) to get `primary_version.id`, then `GET /plans/{plan_id}/versions/{id}` for the full derived config.
+
+**Synchronous, but not instant** — unlike Optimizer/Forecaster creates, there is no `processing` state and nothing to poll: the request blocks while the plan is derived, then the 201 comes back with the plan already fully readable. It is not sub-second, though, and how long it takes varies by client and by plan — the date range, channel count, and volume of data behind the source optimization all matter. Don't add a poll loop, don't assume it returns immediately, and don't quote a fixed duration to the client. Set a generous request timeout (the default in most HTTP clients is fine; just don't tighten it to a couple of seconds).
+
+Requires the source optimization to have `status == "success"` with results. An optimization that's still processing, errored, or was canceled is rejected with 422 — there's nothing to derive a budget from.
+
+| Status | Meaning |
+|---|---|
+| 201 | Created — `{"id": "..."}` |
+| 400 | Missing required parameter — blank body, missing `form`, missing `optimization_id`/`label`, or an empty-string `label` (treated as not provided, not as an invalid value) |
+| 404 | Client not found (an inaccessible-but-real client slug can also surface as 403, same as read endpoints elsewhere in this API) |
+| 422 | Validation failed — non-existent or malformed `optimization_id`, or a real optimization whose `status` isn't `success` |
 
 ### Index — `GET /v1/clients/{client_slug}/plans`
 
@@ -146,6 +180,7 @@ What actually trips up code:
 
 | Endpoint | Wrapper |
 |---|---|
+| `POST /plans` | Returned directly — `{"id": "..."}` only, no wrapper |
 | `GET /plans` | `{"data": [...], "pagination": {...}}` |
 | `GET /plans/{plan_id}/versions` | `{"data": [...], "pagination": {...}}` |
 | `GET /plans/{plan_id}/versions/{id}` | Returned directly, no wrapper |
@@ -157,6 +192,23 @@ What actually trips up code:
 ---
 
 ## Schema Reference
+
+### PlanCreateForm (create request body)
+
+```json
+{
+  "optimization_id": "integer — the source optimization's id; must have status: success with results",
+  "label": "string — required, non-empty; the only field actually authored by the request"
+}
+```
+
+### PlanCreateResponse (create response, 201)
+
+```json
+{ "id": "uuid string" }
+```
+
+No other fields. Read back the derived config via `GET /plans` (find by label) → `primary_version.id` → `GET /plans/{plan_id}/versions/{id}`.
 
 ### PlanSummary (Index item)
 
@@ -293,8 +345,6 @@ Each entry in `results[].downloads` has a `key`. Fetch its CSV with `GET /plans/
 | `expected_observed_paid_roi` | "Expected Observed Paid ROI" |
 | `expected_roi` | "Expected ROI" — the **paid** ROI of the forecasted spend (same paid basis as `expected_observed_paid_roi`, not blended with baseline/organic), but counting outcome realized *during or after* the forecast window ends (e.g. adstock/carryover). The two paid-ROI fields differ only in time window counted. `expected_blended_roi` is a different, windowed-and-blended figure — don't treat any of the three as interchangeable. |
 
-This is a recent fix. Older responses / older code you might see referenced elsewhere used only `expected_outcome`, `expected_roi`, and `paid_roi` — with `expected_roi` back then actually holding the "Expected Blended ROI" value, and no field at all for the UI's distinct "Expected ROI" or "Total Forecasted Spend." If you're generating code, always use the current field names above and the mapping table, not any older `paid_roi`-based examples you might find.
-
 **Each of the four fields above also has a companion `_quantiles` object** — `expected_outcome_quantiles`, `expected_blended_roi_quantiles`, `expected_observed_paid_roi_quantiles`, `expected_roi_quantiles` — each shaped `{"median": number, "p25": number, "p75": number}`. The point-estimate field (e.g. `expected_roi`) and its `_quantiles.median` aren't necessarily identical; use whichever the client actually wants (a single point estimate vs. an uncertainty range).
 
 ### Adherence (list item and show response)
@@ -335,6 +385,8 @@ List items carry `id` (integer — the adherence report's own id), `plan_version
 
 | Client says | What to do |
 |---|---|
+| "Turn this optimization into a plan" | `POST /plans` with `form: {optimization_id, label}` — only works if the optimization's `status` is `success` |
+| "Make a plan called 'X' from optimization 12345" | Same call: `optimization_id: 12345`, `label: "X"` |
 | "Show me all my plans" | `GET /plans` (paginate as needed) |
 | "What plans are running right now?" | `GET /plans?status=current` |
 | "Find the plan called 'Q3 Growth Plan'" | `GET /plans?label=Q3` then match exactly on `label` client-side, or just filter server-side and take the match |
@@ -361,7 +413,41 @@ List items carry `id` (integer — the adherence report's own id), `plan_version
 
 ## Common Scenarios with Full Examples
 
-### Scenario 1: List current plans and their total spend
+### Scenario 1: Create a plan from a successful optimization, then read it back
+
+```python
+# 1. Create — synchronous, no polling. Requires a successful optimization
+#    (use the optimizer-api skill to find/run one if the client doesn't have
+#    an id yet).
+create_resp = requests.post(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans",
+    headers=HEADERS,
+    json={"form": {"optimization_id": 1003941377, "label": "Q3 Growth Plan"}},
+)
+assert create_resp.status_code == 201, f"Failed: {create_resp.text}"
+plan_id = create_resp.json()["id"]
+
+# 2. Read it back: find it in the index, then pull its primary version.
+plans = requests.get(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans",
+    headers=HEADERS, params={"label": "Q3 Growth Plan", "per_page": 100},
+).json()["data"]
+plan = next(p for p in plans if p["id"] == plan_id)
+
+version_id = plan["primary_version"]["id"]
+version = requests.get(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan_id}/versions/{version_id}",
+    headers=HEADERS,
+).json()
+
+print(f"Created plan {plan_id}, version {version['version_number']}: "
+      f"{version['start_date']} to {version['end_date']}, total_spend={version['total_spend']}")
+# Spike groups only include spikes whose dates fall within [start_date, end_date] —
+# a spike entirely outside that window is correctly absent, not a bug.
+print("Spike groups:", [g["spike_name"] for g in version["depvar_spike_groups"]])
+```
+
+### Scenario 2: List current plans and their total spend
 
 ```python
 import os, requests
@@ -383,7 +469,7 @@ for plan in resp.json()["data"]:
     print(f"{plan['label']} ({plan['plan_type']}): total_spend={spend}")
 ```
 
-### Scenario 2: Pull the primary version's full config for a named plan
+### Scenario 3: Pull the primary version's full config for a named plan
 
 ```python
 plans = requests.get(
@@ -403,7 +489,7 @@ print("Compatible KPIs:", [k["label"] for k in version["compatible_kpis"]])
 print("Incompatible KPIs:", [k["label"] for k in version["incompatible_kpis"]])
 ```
 
-### Scenario 3: Download the budget CSV for the primary version
+### Scenario 4: Download the budget CSV for the primary version
 
 ```python
 import io, pandas as pd
@@ -419,7 +505,7 @@ df.to_csv("plan_budget.csv", index=False)
 print(f"Saved plan_budget.csv ({len(df)} rows, columns: {list(df.columns)})")
 ```
 
-### Scenario 4: Compare total_spend across all versions of a plan
+### Scenario 5: Compare total_spend across all versions of a plan
 
 ```python
 versions = requests.get(
@@ -433,7 +519,7 @@ for v in versions:
     print(f"{v['version_number']}{marker}: total_spend={v['total_spend']}, created_at={v['created_at']}")
 ```
 
-### Scenario 5: Pull a plan version's forecast, plus its planned-vs-actual counterfactuals
+### Scenario 6: Pull a plan version's forecast, plus its planned-vs-actual counterfactuals
 
 ```python
 # 1. altcast_types is a swap, not an additive filter: omitting it returns only
@@ -475,7 +561,7 @@ for altcast_type, summary in altcast_summaries.items():
     print(f"Counterfactual ({altcast_type}): expected_outcome={outcome}")
 ```
 
-### Scenario 6: Reconstruct the UI's Counterfactual summary (planned vs. actual)
+### Scenario 7: Reconstruct the UI's Counterfactual summary (planned vs. actual)
 
 The UI's Counterfactual section shows a planned-vs-actual comparison for a specific window: **the counterfactual period**. Its `start_date`/`end_date` come directly from the counterfactual forecast's own response (the planned and actuals counterfactuals for the same plan version share the same window) — no need to compute it separately.
 
@@ -624,7 +710,7 @@ print(f"In-sample Forecast Error %:  {in_sample_forecast_error_pct}")
 
 This is a best-effort reconstruction, not a guaranteed match to the UI — it still doesn't call the UI's actual `compute_plan_counterfactual` request. The core metric calculations (the cusum technique for all three forecasts, the period-scoped spend summing, and the derived ROI/error formulas) were validated end-to-end against a live account and produced sane, self-consistent numbers. The deployment-matching candidate-selection logic above wasn't exercised in that same run (the forecasts were selected manually) — treat it as a reasonable first pass, not verified. The exact "In-sample Forecast Error" sign/denominator convention also hasn't been checked against the UI. Verify both against a real account with known UI values before treating this as fully authoritative.
 
-### Scenario 7: Check spend adherence for a plan version
+### Scenario 8: Check spend adherence for a plan version
 
 ```python
 reports = requests.get(
@@ -688,7 +774,7 @@ Both sides are scoped to `report_through_date`, so these deltas are like-for-lik
 
 8. **Expecting `results` on a forecasts-list item** — `PlanForecastSummary` (from the list endpoints) is a summary only; it has no `form` or `results`. You must call the show endpoint (`GET /plans/{plan_id}/forecasts/{forecast_id}`) for each forecast you need outcome data from.
 
-9. **Trying to create or edit a plan via the API** — There is no POST/PATCH endpoint yet. All plan authoring happens in the UI for now.
+9. **Assuming Plans has no create endpoint at all** — It does now, but narrowly: `POST /plans` only *derives* a plan from a successful optimization's results (see Create above). There's still no way to build a plan from scratch or edit an existing one via the API — point clients to the UI for either of those. Also: fields beyond `form.optimization_id`/`form.label` aren't accepted, and can't override any derived value — budget, dates, spikes, and lower-funnel caps always come from the optimization.
 
 10. **Not handling `null` on `status`, `label`, `total_spend`** — Several fields are nullable (a version can have no dates and thus no derived status). Guard for `None`/`null` before using these values. `primary_version`, by contrast, is never `null` — every plan has one.
 
@@ -710,6 +796,8 @@ Both sides are scoped to `report_through_date`, so these deltas are like-for-lik
 
 - A **malformed** (non-UUID) `plan_id` or version `id` currently returns **503** instead of the schema-documented **404**. A well-formed but non-existent UUID correctly returns 404. If you see a 503 on a lookup, check whether the ID you passed is a valid UUID before assuming the resource is down. This one is a genuine implementation bug, not documented behavior.
 
+- **An empty-string `label` on `POST /plans` is treated as missing, not invalid** — it returns **400** with `"Missing required parameter: label"`, not the 422 you might expect for a validation failure. Consistent across clients. If you're distinguishing "you forgot a field" from "your value is bad," `label: ""` lands in the first bucket.
+
 - **Unrecognized query params on `GET /plans/{plan_id}/forecasts` are silently ignored, not rejected.** This isn't a bug, but it's a real trap: a wrong param name looks exactly like a working-but-empty filter, since the request still returns 200 with the unfiltered set. Two names that are easy to get wrong: the counterfactual filter is `altcast_types` (plural), not `altcast`; the KPI filter is `kpi_id`, not `kpi`. If a filter you're using seems to have no effect, double-check the exact param name before assuming the API is broken (an earlier version of this doc mistakenly reported `altcast` filtering as a server-side no-op — it was actually just the wrong param name).
 
 - `altcast_types` **is a swap, not an additive filter, and it validates its value.** Omit the param entirely to get only the plan's regular, forward-looking forecasts (counterfactuals are excluded by default). Pass it to get *only* counterfactuals of the requested kind(s) instead — there's no single call that returns regular and counterfactual forecasts mixed together. Passing a blank value or an unrecognized string returns **422**, not a silent no-op.
@@ -723,7 +811,7 @@ Both sides are scoped to `report_through_date`, so these deltas are like-for-lik
 - NEVER print, log, or display the token.
 - Base URL: `https://api.getrecast.com`
 - Auth: Bearer token in the Authorization header.
-- This is a read-only API — never generate code that attempts POST/PATCH/DELETE against `/plans`.
+- `POST` is supported only for creating a plan from a successful optimization (`POST /plans` with `form: {optimization_id, label}`). Never generate `PATCH`/`PUT`/`DELETE` against `/plans`, and don't attempt to build or edit a plan's config through the create call — only `optimization_id` and `label` are accepted; everything else is derived server-side.
 - Set `Accept: text/csv` explicitly when downloading a version's budget.
 - Include error handling that shows the response body on non-200 responses.
 
@@ -746,6 +834,7 @@ Both sides are scoped to `report_through_date`, so these deltas are like-for-lik
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| POST | `/v1/clients/{client_slug}/plans` | Create a plan from a successful optimization's results (`form: {optimization_id, label}`) — synchronous, no polling |
 | GET | `/v1/clients/{client_slug}/plans` | List plans (paginated: `?page=1&per_page=25`; filters: `plan_type`, `label`, `status`, `kpi_ids`, `created_by`) |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/versions` | List a plan's versions (paginated, same as the Index) |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/versions/{id}` | Show full version detail |
@@ -793,6 +882,7 @@ Returned directly (no wrapper) — see PlanVersionDetail schema above.
 
 | Client says | API field / action |
 |---|---|
+| "turn this optimization into a plan", "save this optimization as a plan" | `POST /plans` (`form.optimization_id`, `form.label`) — requires the optimization's `status` to be `success` |
 | "plan", "media plan" | A Plan resource, `GET /plans` |
 | "live version", "current version" | `primary_version` (Index) / `primary: true` (versions list/show) |
 | "version history", "past versions" | `GET /plans/{plan_id}/versions` |
@@ -808,6 +898,8 @@ Returned directly (no wrapper) — see PlanVersionDetail schema above.
 | "adherence", "am I on budget", "spend to date", "planned vs actual spend" | `GET /plans/{plan_id}/adherence` (filter with `plan_version_id`) — `highlights` on the show response; `report_through_date` is how current it is |
 
 ## Resources
+
+If the client wants to find or run the source optimization for a Create call, see the **optimizer-api** skill.
 
 If the client asks for something not covered here:
 - https://docs.getrecast.com/docs/plans

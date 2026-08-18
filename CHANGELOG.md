@@ -3,6 +3,23 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-08-18
+
+### Added
+
+- **Plans skill: create a plan from a successful optimization.** The Plans API
+  now has a write path — `POST /plans` derives a new Plan from a successful
+  Optimizer run (`form: {optimization_id, label}`), with budget, dates, spikes,
+  and lower-funnel caps all carried over from the optimization. `label` is the
+  only field the request authors. The call is synchronous (no polling), and the
+  created plan is read back through the existing index/version endpoints.
+
+### Changed
+
+- **Optimizer skill: point at saving a result as a Plan.** Once an optimization
+  finishes successfully, the skill now offers to turn it into a Plan via the
+  Plans API, and points to the plans-api skill for everything plan-side.
+
 ## [1.2.1] - 2026-07-31
 
 ### Changed
