@@ -3,6 +3,32 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] - 2026-08-31
+
+### Added
+
+- **Plans skill: Goals are readable.**
+  `GET /plans/{plan_id}/goals` returns a paginated index, filtered by `kpi_id`
+  and by `status` (`expired`/`current`/`future`). There is no Goal show
+  endpoint — pacing comes from the Goal's forecast, so
+  `GET /plans/{plan_id}/forecasts` gained a `goal_id` filter and the forecast
+  show response carries `goal_id` plus a `goal_highlights` block (`projected`,
+  `pacing`, `success_probability`, and `details.spend`/`kpi`/`blended_roi`,
+  each with `so_far`/`forecasted`/`projected`).
+
+- **Plans skill: ranged and summarized CSV exports.** The version budget
+  download takes `granularity` (`total`/`monthly`/`weekly`/`daily`) plus
+  `start_date` and `end_date`, so a monthly or quarterly view no longer means
+  pulling every day and resampling. Forecast result downloads take
+  `start_date`/`end_date` wherever the CSV has a date column. Note that the
+  leading columns change with granularity — `date` for daily, but `start_date`
+  and `end_date` for anything summarized.
+
+### Changed
+
+- **Plans skill: refreshed API quirks.** The malformed-`plan_id` 503 is fixed
+  and now returns 404 as documented.
+
 ## [1.3.0] - 2026-08-18
 
 ### Added

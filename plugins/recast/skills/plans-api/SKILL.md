@@ -1,6 +1,6 @@
 ---
 name: plans-api
-description: Use when reading Recast Plans programmatically, or creating a plan from a successful Optimizer run — "list my plans", "get a plan's budget", "pull a plan's forecast", "what changed between these two plan versions", "get counterfactual forecasts for this plan", "am I sticking to my plan's budget", "planned vs actual spend", "turn this optimization into a plan", "save this optimization as a plan". Translates plan goals into API requests for retrieving plans, versions, budgets, forecasts/counterfactuals, and spend adherence, plus creating a new plan derived from a successful optimization. Plans still cannot be built from scratch or edited via this API — only read, or created directly from an optimization's results.
+description: Use when reading Recast Plans programmatically, or creating a plan from a successful Optimizer run — "list my plans", "get a plan's budget", "pull a plan's forecast", "what changed between these two plan versions", "get counterfactual forecasts for this plan", "am I sticking to my plan's budget", "planned vs actual spend", "turn this optimization into a plan", "save this optimization as a plan", "what are my goals on this plan", "am I on track to hit my target", "what is my goal pacing". Translates plan goals into API requests for retrieving plans, versions, budgets, forecasts/counterfactuals, spend adherence, and Goals with their pacing and success probability, plus creating a new plan derived from a successful optimization. Plans still cannot be built from scratch or edited via this API — only read, or created directly from an optimization's results.
 ---
 
 # Recast Plans API — Reading Plan Configuration and Budgets, and Creating Plans from Optimizations
@@ -58,6 +58,7 @@ Write a single, self-contained script following the Code Generation Rules below.
 | **Counterfactual / altcast_type** | A *retroactive* re-forecast of already-elapsed (in-sample) days, using the **current/latest model** rather than whatever model existed at the time — not a forward-looking prediction. Not a single comparison object either — two separate ordinary Forecast results, distinguished by `altcast_type`: `null` (the plan's regular, forward-looking forecast), `"planned"` (what the current model predicts the plan's **originally specified budget** would have produced over those historical days), or `"actuals"` (what the current model predicts the **actual spend** that occurred would have produced). No combined "planned vs. actual" payload; diffing the two is a client-side exercise. |
 | **Recommendations** | Suggested budget reallocations to improve a forecasted outcome, at Conservative / Moderate / Aggressive risk levels. Available on all Forecasts associated with a Plan (see the forecaster-api skill for the `run_recommendations` flag). |
 | **Adherence** | Planned vs. actual **spend** per channel for one plan version — the app's Adherence section. Input comparison only: no modeling, no KPI, no ROI. A new report is created each time new spend data lands, and both sides are scoped to that report's `report_through_date` (so `planned_spend` is not the plan's whole-period total). |
+| **Goal** | A target on a KPI inside a Plan, over a date range within the Plan's period. A Plan can have several Goals, and their ranges may overlap; the budget and channels behind a Goal come from the Plan. **Its `status` does not follow the `status` row above:** a Goal's status is derived from the last date of data the model has, not from today's date, so a Goal whose window has already opened can still be `future`. Read-only, and there is no Goal show endpoint — pacing and probability come from the Goal's forecast (`goal_highlights`). |
 
 ---
 
@@ -130,15 +131,19 @@ Returned directly, no wrapper. Requires all three identifiers: `client_slug`, `p
 
 ### Version budget — `GET /v1/clients/{client_slug}/plans/{plan_id}/versions/{id}/budget`
 
-Returns CSV, not JSON. Set `Accept: text/csv`. First column is `date`; remaining columns are the channels from the version's `budget_summary` metadata (spend + non-spend + contextual variables + lower funnel channels combined).
+Returns CSV, not JSON. Set `Accept: text/csv`. With no params, returns the full daily budget. Remaining columns are always the channels from the version's `budget_summary` metadata (spend + non-spend + contextual variables + lower funnel channels combined).
+
+Three optional query params: `granularity` (one of `total`, `monthly`, `weekly`, `daily`) summarizes the CSV to that level; `start_date` and `end_date` trim the date range.
+
+**The leading columns change with granularity, and this will break naive CSV parsing.** For `daily` (and for no granularity at all) the first column is `date`. For `total`, `monthly` and `weekly` the first two columns are `start_date` and `end_date` instead. Don't hardcode `date` as the index column — read the header, or branch on the granularity you requested. Prefer `granularity=monthly` over pulling daily rows and resampling client-side: it is the same answer with far less data.
 
 ### Plan forecasts & counterfactuals — `GET /v1/clients/{client_slug}/plans/{plan_id}/forecasts`
 
 Plan-driven forecasts are nested under the plan, rather than exposed as query params on the general `/forecasts` endpoint. There is no separate version-scoped forecasts path — filtering to one version happens via a query param on this same endpoint. Each entry carries an ordinary Forecast `form`/`results` shape (see the forecaster-api skill), plus plan-specific fields: `plan_id`, `plan_label`, `plan_version_id`, `plan_version_number`, `kpi_id`, `kpi_label`, and `altcast_type`.
 
-- `GET /plans/{plan_id}/forecasts` — forecasts across every version of the plan. Supports `kpi_id` and `plan_version_id` query filters (pass `plan_version_id` to narrow to one specific version). **Counterfactual (altcast) forecasts are excluded unless requested.** Omitting `altcast_types` returns only the plan's regular, forward-looking forecasts. Passing `altcast_types` (one or more of `planned`/`actuals` — multi-value via `altcast_types=planned,actuals` or `altcast_types[]=planned&altcast_types[]=actuals`, matching the `status`/`kpi_ids` convention elsewhere) switches to *only* counterfactuals of those kinds — it replaces the regular-forecasts result, it doesn't add to it. A blank or unrecognized value returns 422. Goal forecasts are never exposed by these endpoints.
-- `GET /plans/{plan_id}/forecasts/{forecast_id}` — show a single forecast from a particular plan version
-- `GET /plans/{plan_id}/forecasts/{forecast_id}/downloads/{key}` — download a CSV for one of the forecast's results
+- `GET /plans/{plan_id}/forecasts` — forecasts across every version of the plan. Supports `kpi_id` and `plan_version_id` query filters (pass `plan_version_id` to narrow to one specific version). **Counterfactual (altcast) forecasts are excluded unless requested.** Omitting `altcast_types` returns only the plan's regular, forward-looking forecasts. Passing `altcast_types` (one or more of `planned`/`actuals` — multi-value via `altcast_types=planned,actuals` or `altcast_types[]=planned&altcast_types[]=actuals`, matching the `status`/`kpi_ids` convention elsewhere) switches to *only* counterfactuals of those kinds — it replaces the regular-forecasts result, it doesn't add to it. A blank or unrecognized value returns 422. Also supports `goal_id` to narrow to the forecasts behind one Goal — see the Goals section below.
+- `GET /plans/{plan_id}/forecasts/{forecast_id}` — show a single forecast from a particular plan version. For a Goal's forecast this also returns `goal_id` and a `goal_highlights` block.
+- `GET /plans/{plan_id}/forecasts/{forecast_id}/downloads/{key}` — download a CSV for one of the forecast's results. For downloads with a date column (often called `id`), `start_date` and `end_date` trim the range of dates returned; omit both to get all dates.
 
 The human-readable label field (e.g. `"v3"`) is named differently across endpoint families. On the Index, Version list, and Version show endpoints it's `version_number`. On these Forecast endpoints, the version is referenced by two separate fields instead: `plan_version_id` (the version's actual UUID) and `plan_version_number` (the human-readable label). This is intentional (confirmed with engineering) — on a forecast object, an unqualified "version_number" would be ambiguous about which resource's version it means, so the forecast endpoints spell out `plan_version_number`. Don't assume the field name carries over between the two families.
 
@@ -173,6 +178,65 @@ What actually trips up code:
 - **`planned_spend` is `null` for lower funnel channels that weren't provided** (`lf_option` of `capped`/`uncapped`) — the plan never stated a figure, so there's no target. Expected output, not missing data, and not the same as `0`: coercing it turns those channels into fabricated overspends.
 - **Both sides are scoped to `report_through_date`**, so `actual_spend − planned_spend` is like-for-like. `planned_spend` is not the plan's whole-period total — that's `total_spend` on the version — so don't label it as the full budget.
 - **Downloads** are `all-channels-adherence` plus one `{channel-name}-adherence` per channel — *except* capped/uncapped lower funnel channels, which have no daily planned spend and therefore no file. Read `downloads[].key` off the show response rather than building keys from channel names.
+
+### Goals — `GET /v1/clients/{client_slug}/plans/{plan_id}/goals`
+
+A Goal is a target on a KPI inside a plan, over a date range within the plan's period. Nested under the plan like forecasts and adherence. A plan can have several Goals, and their ranges may overlap. Paginated: `{"data": [...], "pagination": {...}}`.
+
+Query filters: `kpi_id` (UUID) and `status` (one or more of `expired`/`current`/`future`, comma-separated or repeated as `status[]=`), plus `page`/`per_page`.
+
+**There is no Goal show endpoint.** The index gives you the Goal's identity and target; everything else — pacing, success probability, the spend/KPI/ROI breakdown — comes from showing the Goal's forecast. Each Goal carries a `forecast_id` for its latest forecast, so that is one hop:
+
+```
+GET /plans/{plan_id}/goals                        → find the goal, note its forecast_id
+GET /plans/{plan_id}/forecasts/{forecast_id}      → goal_id + goal_highlights (current pacing)
+
+# or, to walk the goal's forecast history:
+GET /plans/{plan_id}/forecasts?goal_id={goal_id}  → every forecast for that goal
+```
+
+Don't reach for `/goals/{id}` or `/goals/{id}/forecasts` — neither exists, both 404.
+
+What actually trips up code:
+
+- **`status` is relative to the model's data end, not to today.** This is the big one. A Goal is `future` while its window sits beyond the last date of data the model has, *even if that window has already opened on the calendar*. A Goal running 1–31 August is still `future` in mid-August when the model has data through 4 July. `current` means the data end falls inside the window; `expired` means the whole window is behind it. Never compute or "correct" a Goal's status from `date.today()` — you will disagree with the API and with the UI. If you need the reference date, it is the `end_date` of the KPI's active deployment (a KPI's depvar slugs match its deployments' `dashboard_slug`).
+- **`id` is an integer**, unlike plan and version ids which are UUIDs. `kpi_id` is still a UUID.
+- **An unknown `kpi_id` returns 404, not an empty list** — the filter is resolved against the client's KPIs. An invalid `status` returns 422 with the field named in `error.details`. Neither filter is silently ignored.
+- **Don't assume a Goal's KPI is still compatible with the plan version.** The KPI is chosen from the compatible set when the Goal is created, but it can drift out of that set afterwards if the plan or model changes — the Goal keeps its `kpi_id` and the app raises a compatibility warning. So a Goal's `kpi_id` may appear in the version's `incompatible_kpis` rather than `compatible_kpis`. Never resolve a Goal's KPI by looking it up in `compatible_kpis` alone (you'll get a `None` and a crash); use the Goal's own `kpi_label`, or search both lists. If a Goal has no usable forecast, an incompatible KPI is a likely cause worth reporting to the user.
+- **The target field is `goal_value`, not `value`.** Renamed 2026-08-27; older examples and the original API spec show `value`. Reading `goal["value"]` now yields a KeyError / NULL.
+- **`forecast_id` is the goal's latest forecast — use it for current pacing.** Show it directly; there is no need to list the goal's forecasts and sort them. Use the `?goal_id={id}` filter only when you actually want the goal's *history* (how the projection and probability shifted over time), in which case sort by `created_at` yourself rather than trusting list order.
+- **A goal retains its full forecast history, and each forecast's `goal_highlights` reflect the target in force when it ran.** So when walking history, an older forecast's `pacing`/`success_probability` can reference a target that has since been edited — correct as a record of that moment, but not current. Never present an older forecast's pacing as today's number; that is what `forecast_id` is for.
+- **`processing_status` is separate from `status`** — it reports whether the Goal's forecast has finished computing (`success`), while `status` is about where the window sits relative to data. A Goal can be `current` with a `processing_status` that isn't yet `success`.
+- **An empty index is a valid answer** — a plan with no Goals returns 200 with empty `data`. Report it as "no goals set", don't retry.
+
+### Goal highlights (on the forecast show response)
+
+When a forecast belongs to a Goal, its show response carries `goal_id` plus:
+
+```json
+{
+  "goal_id": 247,
+  "goal_highlights": {
+    "projected": 9143778.0,
+    "pacing": 1143778.0,
+    "success_probability": 0.99,
+    "details": {
+      "spend":       { "so_far": 0, "forecasted": 1140011.5, "projected": 1140011.5 },
+      "kpi":         { "so_far": 0, "forecasted": 9143778.0, "projected": 9143778.0 },
+      "blended_roi": { "so_far": null, "forecasted": 8.02, "projected": 8.02 }
+    }
+  }
+}
+```
+
+Relationships worth relying on (all verified against the dev API):
+
+- `projected` is the same number as `details.kpi.projected` — don't present them as two independent figures.
+- `pacing` is `projected` minus the Goal's `goal_value` (its target). Positive means projected to beat the target, negative means projected to fall short. It comes back as a **number**, not a signed string. Each forecast measures pacing against the target in force when it ran, so this reconciles against the goal's current `goal_value` on the latest forecast (the one `forecast_id` names) — not necessarily on an older one from the history.
+- `success_probability` is a fraction between 0 and 1 — multiply by 100 for a percentage, and don't assume it's already a percent.
+- For `spend` and `kpi`, `so_far + forecasted = projected`. Don't recompute `projected` some other way.
+- `details.blended_roi` members are `null` where the matching spend is 0 — ROI is undefined with no spend. Guard for `None`; do not coerce to 0, which would render as "0x ROI" instead of "not applicable yet".
+- A Goal still beyond the model's data end reports `so_far: 0` throughout, so all of `projected` is forecast rather than realized. Don't describe it as progress made.
 
 ---
 
@@ -381,6 +445,49 @@ List items carry `id` (integer — the adherence report's own id), `plan_version
 
 ---
 
+### Goal (goals-index item)
+
+```json
+{
+  "id": "integer",
+  "name": "string",
+  "goal_value": "number — the KPI target",
+  "status": "expired | current | future — relative to the model's data end, NOT today",
+  "processing_status": "string — e.g. 'success'; whether the goal's forecast has computed",
+  "start_date": "YYYY-MM-DD",
+  "end_date": "YYYY-MM-DD",
+  "kpi_id": "uuid string",
+  "kpi_label": "string",
+  "forecast_id": "integer — the goal's LATEST forecast; show it for current pacing",
+  "created_at": "ISO8601",
+  "updated_at": "ISO8601"
+}
+```
+
+Wrapped in the usual `{"data": [...], "pagination": {...}}`. There is no Goal detail schema — the index item above is the whole Goal payload, and the rest lives on the forecast show response as `goal_id` + `goal_highlights`.
+
+### GoalHighlights (on PlanForecastDetail, when the forecast belongs to a Goal)
+
+```json
+{
+  "goal_id": "integer",
+  "goal_highlights": {
+    "projected": "number — same as details.kpi.projected",
+    "pacing": "number — projected minus the goal's target value",
+    "success_probability": "number in [0, 1]",
+    "details": {
+      "spend":       { "so_far": "number", "forecasted": "number", "projected": "number" },
+      "kpi":         { "so_far": "number", "forecasted": "number", "projected": "number" },
+      "blended_roi": { "so_far": "number | null", "forecasted": "number | null", "projected": "number | null" }
+    }
+  }
+}
+```
+
+Absent entirely on forecasts that aren't tied to a Goal — check for the key, don't assume it.
+
+---
+
 ## Translating Client Asks to API Calls
 
 | Client says | What to do |
@@ -407,7 +514,14 @@ List items carry `id` (integer — the adherence report's own id), `plan_version
 | "Which channels are over/under-spending?" | Same call → flatten `highlights.spend_channels.upper_funnel` + `.lower_funnel`, sort by `actual_spend − planned_spend`, skipping `null` planned values |
 | "Show me daily planned vs. actual for Meta" | Adherence show → `GET /plans/{plan_id}/adherence/{id}/downloads/meta-adherence`. Confirm the key is in `downloads` first — capped/uncapped lower funnel channels don't have one |
 | "How are my non-spend channels tracking?" | Not available — adherence covers spend channels only in this release |
-| "What's my Goal pacing on this plan?" | Not available — Goals are excluded from this API release entirely |
+| "What Goals are set on this plan?" | `GET /plans/{plan_id}/goals` |
+| "Which Goals are actually being tracked right now?" | `GET /plans/{plan_id}/goals?status=current` — and explain that `current` means the model's data has reached the Goal's window, not that the window is open on the calendar |
+| "What's my Goal pacing? / Will I hit my Goal?" | `GET /plans/{plan_id}/goals` → note the goal `forecast_id` → `GET /plans/{plan_id}/forecasts/{forecast_id}` → read `goal_highlights.pacing` and `goal_highlights.success_probability` |
+| "How far along is my Goal?" | Same call → `goal_highlights.details.kpi.so_far` vs `.projected`. If `so_far` is 0 the Goal hasn't started in data terms — say that rather than "0% progress" |
+| "Show me Goals on the Revenue KPI" | `GET /plans/{plan_id}/goals?kpi_id={revenue_kpi_id}` |
+| "Give me the budget by month / quarter / total" | `GET /plans/{plan_id}/versions/{version_id}/budget?granularity=monthly` — remember the leading columns become `start_date`,`end_date` for any non-daily granularity |
+| "Just the budget for July" | `.../budget?start_date=2026-07-01&end_date=2026-07-31` — trim server-side rather than downloading everything |
+| "Only give me the forecast CSV for these dates" | `.../forecasts/{forecast_id}/downloads/{key}?start_date=...&end_date=...` — works on downloads that have a date column |
 
 ---
 
@@ -756,6 +870,60 @@ Both sides are scoped to `report_through_date`, so these deltas are like-for-lik
 
 ---
 
+### Scenario 9: Check whether a Goal is on pace
+
+```python
+# 1. Find the goal. `status=current` means the model's data has reached the
+#    goal's window — NOT that the window is open on the calendar.
+goals = requests.get(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan['id']}/goals",
+    headers=HEADERS,
+    params={"per_page": 100},
+).json()["data"]
+
+if not goals:
+    raise SystemExit("No goals set on this plan.")
+
+goal = goals[0]
+print(f"{goal['name']}: target {goal['goal_value']:,.0f} on {goal['kpi_label']} "
+      f"({goal['start_date']} to {goal['end_date']}, status={goal['status']})")
+
+# 2. forecast_id is the goal's latest forecast, so this is a single call —
+#    goal highlights live on the show response, not on any list item.
+detail = requests.get(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan['id']}/forecasts/{goal['forecast_id']}",
+    headers=HEADERS,
+).json()
+
+# To walk the goal's history instead (how the projection shifted over time),
+# list its forecasts and sort by created_at — list order is not guaranteed:
+#   forecasts = requests.get(
+#       f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan['id']}/forecasts",
+#       headers=HEADERS, params={"goal_id": goal["id"], "per_page": 100},
+#   ).json()["data"]
+#   history = sorted(forecasts, key=lambda f: f["created_at"], reverse=True)
+
+h = detail["goal_highlights"]
+verb = "ahead of" if h["pacing"] >= 0 else "behind"
+print(f"Projected {h['projected']:,.0f} — {abs(h['pacing']):,.0f} {verb} target, "
+      f"{h['success_probability'] * 100:.0f}% chance of hitting it")
+
+kpi, spend, roi = h["details"]["kpi"], h["details"]["spend"], h["details"]["blended_roi"]
+if kpi["so_far"] == 0:
+    print("Nothing realized yet — the goal's window is still beyond the model's data.")
+else:
+    print(f"KPI so far {kpi['so_far']:,.0f} of {kpi['projected']:,.0f} projected")
+
+# blended_roi members are None where the matching spend is 0 — ROI is undefined,
+# which is not the same as 0.
+if roi["projected"] is None:
+    print(f"Projected spend {spend['projected']:,.0f}; blended ROI not applicable yet")
+else:
+    print(f"Projected spend {spend['projected']:,.0f} at {roi['projected']:.2f}x blended ROI")
+```
+
+---
+
 ## Common Mistakes to Avoid
 
 1. **Calling `GET /plans/{plan_id}/versions/{version_id}/forecasts`** — This path doesn't exist. Forecasts are only accessible via `GET /plans/{plan_id}/forecasts`, filtered with the `plan_version_id` query param to narrow to one version.
@@ -766,7 +934,7 @@ Both sides are scoped to `report_through_date`, so these deltas are like-for-lik
 
 4. **Treating `include_lower_funnel_effects`-style string booleans as a pattern here** — Plans endpoints use real JSON booleans (`primary: true`) and real numbers (`total_spend: 1250000.0`), unlike some Reporter/Optimizer form fields that require string-typed booleans/numbers. Don't stringify Plans values.
 
-5. **Assuming Goals are queryable** — They are explicitly excluded from this API release. Don't guess at a `/goals` endpoint.
+5. **Computing a Goal's `status` from today's date** — Goal status is relative to the last date of data the model has, not to the calendar. A Goal whose window has already opened can legitimately still be `future`, and "correcting" it client-side puts you out of step with both the API and the UI. Related: don't invent a `/goals/{id}` show endpoint (it 404s) — a Goal's detail comes from `GET /plans/{plan_id}/forecasts?goal_id={goal_id}` and then showing that forecast.
 
 6. **Expecting a single combined counterfactual object** — There is no "planned vs. actual" comparison payload. A plan version's counterfactuals are two ordinary Forecast results — one with `altcast_type: "planned"`, one with `altcast_type: "actuals"` — in the same forecasts list as the plan's regular forecast (which has `altcast_type: null`). Fetch both and diff them yourself if you want a comparison.
 
@@ -794,7 +962,15 @@ Both sides are scoped to `report_through_date`, so these deltas are like-for-lik
 
 ## Known API Quirks (current dev environment)
 
-- A **malformed** (non-UUID) `plan_id` or version `id` currently returns **503** instead of the schema-documented **404**. A well-formed but non-existent UUID correctly returns 404. If you see a 503 on a lookup, check whether the ID you passed is a valid UUID before assuming the resource is down. This one is a genuine implementation bug, not documented behavior.
+- **Malformed (non-UUID) `plan_id` handling is now correct.** An earlier version of this doc reported 503 for a malformed id; as of 2026-08-27 both a malformed id and a well-formed non-existent UUID return the documented **404** on the versions and goals paths. Treat 404 as the expected answer for a bad id.
+
+- **An out-of-range page reports `pagination.per_page: 0`** on the goals and plan-forecasts indexes (the plans index is unaffected). The field mirrors the number of rows returned rather than the page size once you page past the end. Don't use `per_page` from the response to drive a pagination loop — use `total_pages`/`total_count`, or stop when `data` comes back empty.
+
+- **Goal `status` is derived from the model's data end date, not the current date.** Verified: a Goal running 2026-08-01 to 2026-08-31 reports `future` on 2026-08-26 because the model has data through 2026-07-04, and `status=current` correctly returns nothing for it. This is intended behavior, not a bug — but it means a `status=current` filter answers "what is being tracked against real data", which is not the same question as "what is running right now on the calendar".
+
+- **The goal target field was renamed to `goal_value`** as of 2026-08-27 (the original API spec said `value`). Older examples using `goal["value"]` are stale.
+
+- **`goal_id` belongs to the plan-scoped forecasts index only.** On `GET /plans/{plan_id}/forecasts` it filters properly, and an unknown goal returns 404 rather than an unfiltered list. The top-level `GET /forecasts` index does not accept it and will ignore it — and it could not work there anyway, since plan and goal forecasts are a separate collection that the top-level index never returns.
 
 - **An empty-string `label` on `POST /plans` is treated as missing, not invalid** — it returns **400** with `"Missing required parameter: label"`, not the 422 you might expect for a validation failure. Consistent across clients. If you're distinguishing "you forgot a field" from "your value is bad," `label: ""` lands in the first bucket.
 
@@ -838,15 +1014,16 @@ Both sides are scoped to `report_through_date`, so these deltas are like-for-lik
 | GET | `/v1/clients/{client_slug}/plans` | List plans (paginated: `?page=1&per_page=25`; filters: `plan_type`, `label`, `status`, `kpi_ids`, `created_by`) |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/versions` | List a plan's versions (paginated, same as the Index) |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/versions/{id}` | Show full version detail |
-| GET | `/v1/clients/{client_slug}/plans/{plan_id}/versions/{id}/budget` | Download the daily budget as CSV (`Accept: text/csv`) |
-| GET | `/v1/clients/{client_slug}/plans/{plan_id}/forecasts` | List forecasts across every version of the plan (filters: `kpi_id`, `plan_version_id`, `altcast_types`; counterfactuals have `altcast_type` of `"planned"` or `"actuals"`, regular forecasts have `altcast_type: null`) |
+| GET | `/v1/clients/{client_slug}/plans/{plan_id}/versions/{id}/budget` | Download the budget as CSV (`Accept: text/csv`; optional `granularity` = `total`/`monthly`/`weekly`/`daily`, `start_date`, `end_date`) |
+| GET | `/v1/clients/{client_slug}/plans/{plan_id}/forecasts` | List forecasts across every version of the plan (filters: `kpi_id`, `plan_version_id`, `goal_id`, `altcast_types`; counterfactuals have `altcast_type` of `"planned"` or `"actuals"`, regular forecasts have `altcast_type: null`) |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/forecasts/{forecast_id}` | Show a single plan-linked forecast |
-| GET | `/v1/clients/{client_slug}/plans/{plan_id}/forecasts/{forecast_id}/downloads/{key}` | Download a CSV for one of the forecast's results |
+| GET | `/v1/clients/{client_slug}/plans/{plan_id}/forecasts/{forecast_id}/downloads/{key}` | Download a CSV for one of the forecast's results (optional `start_date`, `end_date` on downloads with a date column) |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/adherence` | List adherence reports across every version of the plan (paginated; optional filter: `plan_version_id`) |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/adherence/{id}` | Show one adherence report (`id` = the report's id): planned vs. actual spend highlights + downloads |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/adherence/{id}/downloads/{key}` | Download an adherence CSV: `all-channels-adherence` or `{channel-name}-adherence` |
+| GET | `/v1/clients/{client_slug}/plans/{plan_id}/goals` | List a plan's Goals (paginated; filters: `kpi_id`, `status`) |
 
-Not yet released: goals.
+There is no Goal show endpoint, and no create/update endpoints anywhere in the Plans API.
 
 ### Index response
 
@@ -874,7 +1051,9 @@ Returned directly (no wrapper) — see PlanVersionDetail schema above.
 
 ### Budget response
 
-`text/csv` body: `date` column plus one column per channel in the version's `budget_summary` metadata.
+`text/csv` body: one column per channel in the version's `budget_summary` metadata, preceded by either a `date` column (daily, or no `granularity` param) or `start_date` + `end_date` columns (`total`, `monthly`, `weekly`).
+
+Filter examples: `?granularity=monthly`, `?granularity=total`, `?start_date=2026-07-01&end_date=2026-09-30`, `?granularity=weekly&start_date=2026-07-01`.
 
 ---
 
@@ -887,6 +1066,9 @@ Returned directly (no wrapper) — see PlanVersionDetail schema above.
 | "live version", "current version" | `primary_version` (Index) / `primary: true` (versions list/show) |
 | "version history", "past versions" | `GET /plans/{plan_id}/versions` |
 | "budget", "daily spend plan" | `GET /plans/{plan_id}/versions/{id}/budget` (CSV) — NOT the `budget_summary` field on version show, which is metadata only |
+| "monthly budget", "budget by month" | Same endpoint with `granularity=monthly` — first columns become `start_date`,`end_date` |
+| "goal", "target" | A Goal resource, `GET /plans/{plan_id}/goals` |
+| "am I on track for my goal", "pacing" | `goal_highlights.pacing` / `goal_highlights.success_probability` on the Goal's forecast show response |
 | "channels in this plan" | `budget.spend_channels` / `non_spend_channels` / `contextual_variables` / `lower_funnel_channels` on version show |
 | "branded search cap", "lower funnel setting" | `lower_funnel_channel_caps` |
 | "promotions", "holidays baked into the plan" | `depvar_spike_groups` |
@@ -894,7 +1076,8 @@ Returned directly (no wrapper) — see PlanVersionDetail schema above.
 | "plan type", "default vs custom" | `plan_type` |
 | "is this plan active?" | `status` (`current`/`future`/`expired`) |
 | "plan forecast", "counterfactual", "altcast" | `GET /plans/{plan_id}/forecasts` (filter with `plan_version_id` for one version) — counterfactuals are the entries with a non-null `altcast_type` |
-| "goal", "pacing", "success probability" | Not part of this API — Goals excluded from this release |
+| "goal", "target" | A Goal resource, `GET /plans/{plan_id}/goals` |
+| "pacing", "success probability", "am I on track for my goal" | `goal_highlights` on the Goal's latest forecast — show the goal's `forecast_id` |
 | "adherence", "am I on budget", "spend to date", "planned vs actual spend" | `GET /plans/{plan_id}/adherence` (filter with `plan_version_id`) — `highlights` on the show response; `report_through_date` is how current it is |
 
 ## Resources
