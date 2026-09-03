@@ -3,6 +3,16 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.1] - 2026-09-03
+
+### Changed
+
+- **Marketplace manifest now enumerates the plugin's skills.** Added a `skills`
+  path array to the `recast` plugin entry so third-party plugin aggregators that
+  derive a skill count from the marketplace manifest report all five skills
+  accurately. No change to install behavior — skills continue to auto-discover
+  from `plugins/recast/skills/`.
+
 ## [1.4.0] - 2026-08-31
 
 ### Added

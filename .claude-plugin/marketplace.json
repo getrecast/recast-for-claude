@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Official Recast marketplace for Claude Code.",
-    "version": "1.4.0"
+    "version": "1.4.1"
   },
   "plugins": [
     {
@@ -19,6 +19,13 @@
         "marketing-mix-modeling",
         "mcp",
         "api"
+      ],
+      "skills": [
+        "./skills/forecaster-api",
+        "./skills/getting-started",
+        "./skills/optimizer-api",
+        "./skills/plans-api",
+        "./skills/reporter-api"
       ]
     }
   ]
