@@ -3,6 +3,14 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.5.0] - 2026-09-10
+
+### Added
+
+- Session-start upgrade nudge: once a day the plugin checks GitHub for a newer release and shows a
+  one-line notice with the `claude plugin update recast@recast` command when you're behind. Opt out via the
+  `update_check` plugin setting; it exits early when marketplace auto-update is already on.
+
 ## [1.4.1] - 2026-09-03
 
 ### Changed

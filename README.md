@@ -11,6 +11,13 @@ claude plugin install recast@recast
 
 > Add the marketplace using the GitHub `owner/repo` shorthand shown above (or the full git URL). Do **not** add it via a direct URL to `marketplace.json` — plugin sources are repo-relative and will not resolve that way.
 
+## Updating
+
+Third-party marketplace plugins don't auto-update by default. Update anytime by running
+`claude plugin update recast@recast` in a terminal (then `/reload-plugins`), or turn on automatic
+updates in `/plugin` → **Marketplaces** → **recast** → **Enable auto-update**. See the plugin README
+for details, including how to silence the update check.
+
 ## What you get
 
 The `recast` plugin provides:

@@ -31,6 +31,34 @@ Recast for Claude Code — MCP tools backed by the hosted Recast MCP server, plu
 
 3. Restart Claude Code (fully quit the desktop app if you use it). On first use of a Recast MCP tool, a browser window opens for OAuth sign-in with your Recast account — complete it once.
 
+## Updating
+
+Plugins installed from a third-party marketplace like this one do **not** auto-update by default, so
+your Recast skills can fall behind without you noticing.
+
+**Update now (one time):** run this in a terminal, then `/reload-plugins` in Claude Code (or restart) to apply:
+
+    claude plugin update recast@recast
+
+**Get updates automatically:** in `/plugin`, open **Marketplaces**, select **recast**, and choose
+**Enable auto-update**. After that you'll always be on the latest version.
+
+**About the update check:** on session start (at most once a day) the plugin checks GitHub for a
+newer release and, if you're behind, prints a one-line notice. It only reads a public file and sends
+no data about you, and it goes quiet automatically once auto-update is on.
+
+**Turn the check off:** there is currently no `/plugin` menu toggle for this. Edit
+`~/.claude/settings.json`, set the plugin's `update_check` option to `false`, then run
+`/reload-plugins`:
+
+    {
+      "pluginConfigs": {
+        "recast@recast": {
+          "options": { "update_check": false }
+        }
+      }
+    }
+
 ## Smoke test
 
 1. Run `/mcp` — the `recast` server should show as connected, with its tools listed.

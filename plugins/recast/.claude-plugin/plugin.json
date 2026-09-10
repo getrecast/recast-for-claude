@@ -1,9 +1,17 @@
 {
   "name": "recast",
   "description": "Work with the Recast marketing-mix-modeling platform from Claude Code.",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "author": {
     "name": "Recast Engineering",
     "email": "support@getrecast.com"
+  },
+  "userConfig": {
+    "update_check": {
+      "type": "boolean",
+      "title": "Check for Recast plugin updates",
+      "description": "Once a day, check GitHub for a newer Recast plugin version and show a one-line notice if you're behind. Reads a public file; sends no data. Set false to disable.",
+      "default": true
+    }
   }
 }
