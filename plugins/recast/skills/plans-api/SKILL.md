@@ -1,11 +1,13 @@
 ---
 name: plans-api
-description: Use when reading Recast Plans programmatically, or creating a plan from a successful Optimizer run — "list my plans", "get a plan's budget", "pull a plan's forecast", "what changed between these two plan versions", "get counterfactual forecasts for this plan", "am I sticking to my plan's budget", "planned vs actual spend", "turn this optimization into a plan", "save this optimization as a plan", "what are my goals on this plan", "am I on track to hit my target", "what is my goal pacing". Translates plan goals into API requests for retrieving plans, versions, budgets, forecasts/counterfactuals, spend adherence, and Goals with their pacing and success probability, plus creating a new plan derived from a successful optimization. Plans still cannot be built from scratch or edited via this API — only read, or created directly from an optimization's results.
+description: Use when reading, creating, or editing Recast Plans programmatically — "list my plans", "get a plan's budget", "pull a plan's forecast", "what changed between these two plan versions", "get counterfactual forecasts for this plan", "am I sticking to my plan's budget", "planned vs actual spend", "turn this optimization into a plan", "save this optimization as a plan", "build a plan from this budget", "create a plan from scratch", "change the budget on this plan", "edit my plan", "bump Meta's spend and save it", "save a new version of this plan", "what are my goals on this plan", "am I on track to hit my target", "what is my goal pacing". Translates plan goals into API requests for retrieving plans, versions, budgets, forecasts/counterfactuals, spend adherence and Goals, for creating plans (from scratch, or derived from a successful optimization), and for editing a plan by creating a new plan version. Renaming a plan and deleting a plan is still UI-only.
 ---
 
-# Recast Plans API — Reading Plan Configuration and Budgets, and Creating Plans from Optimizations
+# Recast Plans API — Reading, Creating, and Versioning Plans
 
-You are helping a Recast client work with their **Plans** (the Plans tab of the app) programmatically. Plans can now be created via the API, but only one narrow way — **derived from a successful Optimizer run** (see Create below). There is still no way to build a plan from scratch or edit an existing one via the API; both of those still happen in the UI (https://docs.getrecast.com/docs/plans). Most of your job remains retrieval: finding the right plan, the right version, and the right data (config, budget, forecast, adherence) to pull. When the client already has a successful optimization and wants it turned into a plan, use the Create endpoint instead of pointing them to the UI.
+You are helping a Recast client work with their **Plans** (the Plans tab of the app) programmatically. Plans can be **read**, **created** (from scratch, or derived from a successful Optimizer run), and **edited** — where editing means adding a new version to the plan. What is still UI-only: renaming a plan or deleting a plan (https://docs.getrecast.com/docs/plans).
+
+Most asks are still retrieval: finding the right plan, the right version, and the right data (config, budget, forecast, adherence, Goals) to pull. But when a client wants a plan built or changed, do it through the API rather than sending them to the UI — and read the **Writes: the two rules that bite** section below before you generate any create or version code, because the `budget` field means something different on each of the two write endpoints, and the `base_version_id` lock is easy to get wrong.
 
 **Base URL:** `https://api.getrecast.com`
 **All endpoints are under** `/v1/clients/{client_slug}/plans`.
@@ -18,7 +20,11 @@ You are helping a Recast client work with their **Plans** (the Plans tab of the 
 
 Ask the client what they're trying to get, naturally (one or two at a time):
 
-- **Create or read?** If they have a successful optimization they want turned into a plan ("save this as a plan", "turn this optimization into a plan"), that's the Create endpoint — skip to Create below and just ask for the optimization (id, or a link/name you can resolve via the optimizer-api skill's list endpoint) and the label they want. Otherwise they're reading an existing plan: continue with the questions below.
+- **Read, create, or edit?** Three different paths — settle this first:
+  - **Edit an existing plan** ("change the budget", "bump Meta 10%", "push the plan out a week") → Create version (`POST /plans/{plan_id}/versions`). Ask which plan, and what they want changed. Note up front that dates are *not* editable on a version — a different date range means a new plan.
+  - **Create from an optimization** ("save this as a plan", "turn this optimization into a plan") → Create with `form: {optimization_id, label}`. Just ask for the optimization (id, or a link/name you can resolve via the optimizer-api skill's list endpoint) and the label.
+  - **Create from scratch** ("build a plan from this budget", "make a plan for Q3") → Create with the from-scratch form. You need the label, the date range, and a budget table. Run the channel-discovery sequence below *before* building the payload; don't guess channel names. If they don't have a budget in mind, offer the optimization route instead — it derives one for them.
+  - **Read** → continue with the questions below.
 - **Which plan?** Do they know the plan's label (from the Plans tab) or its `id` (from the URL)? If not, they want to browse/filter the index.
 - **Which version?** Almost always the **primary version** (the live, current one) — this is included directly on each plan in the Index response, so a separate versions call is often unnecessary. Only fetch the versions list if they want history or a specific past version.
 - **What data?**
@@ -48,11 +54,11 @@ Write a single, self-contained script following the Code Generation Rules below.
 | Term | Meaning |
 |---|---|
 | **Plan** | A saved marketing plan: budget + configuration (spikes, contextual variables, lower funnel settings) over a date range. |
-| **Plan Version** | A snapshot of a Plan. Every edit in the UI creates a new version. Only the **primary version** (`primary: true`) is live/editable; others are historical. |
+| **Plan Version** | A snapshot of a Plan. Every edit — in the UI or via `POST /plans/{plan_id}/versions` — creates a new version, which becomes the primary one. Only the **primary version** (`primary: true`) is live and editable; earlier versions are historical and immutable, and are also the only thing you can't use as an edit's base. |
 | **plan_type** | `default` (auto-generated, refreshed every model update, assumes future spend follows historical patterns, 730-day window) or `custom` (user-built). |
 | **status** | Derived, not stored: `future` / `current` / `expired`, based on today's date vs. the plan or version's start/end dates. Can be `null`. |
 | **Budget metadata vs. budget data table** | The version show endpoint returns only the channel *names* used (`spend_channels`, `non_spend_channels`, `contextual_variables`, `lower_funnel_channels`). The actual daily values are a separate CSV download — it can be large, so it's not embedded in the JSON detail. |
-| **Lower funnel channel caps** | Per lower-funnel-channel setting: `uncapped` (predicted from upper funnel), `capped` (max spend for the period), `off` (excluded), or `manual` (fixed values). **Quirk:** the app UI labels this option "provided" — the API returns `manual` for it. If a client asks about "provided" spend, look for `option: "manual"`. |
+| **Lower funnel channel caps** | Per lower-funnel-channel setting: `uncapped` (predicted from upper funnel), `capped` (max spend for the period — needs `cap` > 0), `off` (excluded), or `manual` (you supply the spend, so the channel needs its own budget column). **Quirk:** the app UI labels the `manual` option "provided" — the API returns `manual` for it. If a client asks about "provided" spend, look for `option: "manual"`. |
 | **Spike / depvar spike groups** | Named promotional/holiday events, each tied to one or more depvars (the model components of a KPI) and dates. |
 | **compatible_kpis / incompatible_kpis** | Which KPIs this version's inputs can and can't forecast. A KPI is incompatible when the plan is missing a channel/spike/contextual variable the model needs. |
 | **Counterfactual / altcast_type** | A *retroactive* re-forecast of already-elapsed (in-sample) days, using the **current/latest model** rather than whatever model existed at the time — not a forward-looking prediction. Not a single comparison object either — two separate ordinary Forecast results, distinguished by `altcast_type`: `null` (the plan's regular, forward-looking forecast), `"planned"` (what the current model predicts the plan's **originally specified budget** would have produced over those historical days), or `"actuals"` (what the current model predicts the **actual spend** that occurred would have produced). No combined "planned vs. actual" payload; diffing the two is a client-side exercise. |
@@ -65,6 +71,25 @@ Write a single, self-contained script following the Code Generation Rules below.
 ## Recommended Workflow (Template-First)
 
 If the client is starting from a successful optimization they want turned into a plan, that's a single call — see Create below — not this workflow.
+
+**Before building a from-scratch plan**, resolve the client's channel universe from their models. Do not skip this and do not guess channel names — and specifically, do not enumerate channels from `GET /deployments?active=true` alone, which advertises channels `POST /plans` rejects as unknown (see Known API Quirks):
+
+```
+1. GET /kpis                          → collect every depvars[].slug across the KPIs
+2. GET /deployments?active=true       → keep ONLY deployments whose dashboard_slug is one of those slugs
+3. GET /deployments/{id}              → per deployment: spend_channels_labels, non_spend_channels_labels,
+                                        lower_funnel_channel_labels, contextual_variable_defaults (keys
+                                        = CV names, values = model defaults), spikes[].name,
+                                        start_date / end_date (the plan's date bounds)
+```
+
+**Before editing a plan**, get the base version id. The budget is a patch, so you only fetch the current table when your edit is *relative* to the existing numbers (scale a channel by 10%) or when you need to show the client what's there:
+
+```
+1. GET /plans                                          → primary_version.id (this is your base_version_id)
+2. GET /plans/{plan_id}/versions/{version_id}/budget    → optional: only if the edit needs current values
+3. POST /plans/{plan_id}/versions                      → { base_version_id, form } with just the changed cells
+```
 
 The Index response already includes everything you usually need about the primary version — you rarely have to call the versions list at all.
 
@@ -82,38 +107,172 @@ GET /plans/{plan_id}/versions   → list all versions, ordered created_at descen
 
 ---
 
+## Writes: the two rules that bite
+
+Read these before generating any create or version code. Everything else about writes is ordinary validation; these two are the ones that silently do the wrong thing.
+
+**1. `budget` means two different things on the two write endpoints.** On `POST /plans` it is the plan's *whole* budget and must cover every day of `start_date`..`end_date`. On `POST /plans/{plan_id}/versions` it is a **sparse patch**: only the cells you send are written, and every other channel, date and contextual variable is inherited from the base version. Don't carry an assumption from one endpoint to the other.
+
+Because a version budget is a patch, "raise Meta 10% on 2 July" really is a two-row payload — `[["date","meta"],["2026-07-02","1650"]]` — and it changes nothing else. Sending the whole table back also works and is harmless, but it's not required, and there is no way to *remove* a channel through the budget: setting it to `0` zeroes the spend but keeps the channel in the plan.
+
+`lower_funnel_channel_caps` merges per channel too (listed channels updated, unlisted keep the base version's cap). `spike_type`/`depvar_spike_groups` are the exception — they replace rather than merge, so switching back to `spike_type: "model"` drops the custom groups. And any field omitted from the form entirely inherits, so a caps-only diff leaves the budget untouched.
+
+**2. `base_version_id` must be the plan's *current* primary version.** That is the optimistic lock on concurrent editing. If someone saved a version between your read and your write, you get a **409** (`"base_version_id doesn't match plan's primary version id"`) and nothing is created. Don't retry blindly and don't cache the id across calls: re-read `primary_version.id`, re-apply the change on top of the new primary version, and send again. Two edits from the same base → first 201, second 409.
+
+A rejected write is always a no-op: no orphan version, and the primary flag doesn't move. So a client can safely retry after fixing the payload.
+
+---
+
 ## The Endpoints
 
 ### Create — `POST /v1/clients/{client_slug}/plans`
 
-Creates a plan from a **successful optimization's results** — not a general-purpose create. Everything about the plan except its `label` is derived server-side from the source optimization:
+One endpoint, two mutually exclusive payloads. Both return **201** with only `{"id": "uuid string"}`, and both produce a plan with `plan_type: "custom"` and exactly one version, which is its primary version.
+
+- **From an optimization** — `form: {optimization_id, label}`. Everything else is derived server-side.
+- **From scratch** — `form: {label, start_date, end_date, budget, ...}`. You author the inputs.
+
+**`optimization_id` decides the path, and it wins.** Send it alongside a complete from-scratch form and the optimization path is taken — the budget, dates, caps and spikes you supplied are discarded. Verified: a valid scratch form plus a bogus `optimization_id` returns 422 blaming `optimization_id`, not 201. So never carry `optimization_id` in a from-scratch payload "just in case", and if a client's create fails on a field they didn't think they were sending, check for a leftover `optimization_id`.
+
+**Synchronous, but not instant** — unlike Optimizer/Forecaster creates, there is no `processing` state and nothing to poll: the request blocks while the plan is built, then the 201 comes back with the plan already fully readable. It is not sub-second, though, and how long it takes varies by client and plan — date range, channel count, and the volume of data behind the models all matter. Don't add a poll loop, don't assume it returns immediately, and don't quote a fixed duration. Set a generous request timeout (most HTTP clients' defaults are fine; just don't tighten to a couple of seconds).
+
+Read the created plan back the same way you'd read any plan: `GET /plans` (filter/scan for the label) to get `primary_version.id`, then `GET /plans/{plan_id}/versions/{id}` for the full stored config.
+
+**There is no DELETE for plans or plan versions.** Every successful create leaves a real plan on a real client until someone removes it in the UI. When you generate a create call for testing or exploration, label it obviously (a prefix plus a timestamp) and tell the client it will persist.
+
+#### Path 1: from an optimization
+
+Everything about the plan except its `label` is derived from the source optimization:
 
 - **Budget & dates** — the plan's `start_date`/`end_date` span the optimization's constraint dates, and the daily budget derives from the optimization's recommended spend allocation.
-- **Spikes** — carried over from the optimization's `depvar_configurations[].spikes`, but **only the dates that fall within the plan's own derived period.** A spike entirely outside that window (e.g. the optimization declared a spike from a different year than the plan's date range) is correctly dropped — that's expected scoping, not a bug.
+- **Spikes** — carried over from the optimization's `depvar_configurations[].spikes`, but **only the dates that fall within the plan's own derived period.** A spike entirely outside that window (e.g. the optimization declared a spike from a different year than the plan's date range) is correctly dropped — expected scoping, not a bug.
 - **Lower-funnel channel caps** — derived from the optimization's constraints.
 
-Request body:
 ```json
 { "form": { "optimization_id": 1003941377, "label": "Q3 Growth Plan" } }
 ```
-Both fields required. `optimization_id` is the source optimization's integer id (the Optimizer API's id space, not a plan UUID). `label` is the only value actually authored by the request — extra fields elsewhere in the form are not accepted and cannot override any derived value.
 
-Response (201) — only an id, no plan payload:
+Both fields required. `optimization_id` is the source optimization's integer id (the Optimizer API's id space, not a plan UUID). `label` is the only value actually authored by the request — extra fields alongside it are not accepted and cannot override any derived value. If the client wants to change a derived budget, create the plan and then edit it as a version.
+
+Requires the source optimization to have `status == "success"` with results. One that's still processing, errored, or was canceled is rejected with 422 — there's nothing to derive a budget from.
+
+#### Path 2: from scratch
+
 ```json
-{ "id": "uuid string" }
+{
+  "form": {
+    "label": "Q3 Growth Plan",
+    "start_date": "2026-07-01",
+    "end_date": "2026-07-03",
+    "budget": [
+      ["date", "meta", "google", "holiday"],
+      ["2026-07-01", "1000", "2000", "0"],
+      ["2026-07-02", "1000", "2000", "0"],
+      ["2026-07-03", "1500", "2000", "1"]
+    ],
+    "spike_type": "custom",
+    "depvar_spike_groups": [
+      { "spike_name": "Summer Sale",
+        "depvars": [ { "depvar_slug": "total_sales", "dates": ["2026-07-03"] } ] }
+    ],
+    "lower_funnel_channel_caps": [
+      { "channel_name": "branded_search", "option": "capped", "cap": 50000 }
+    ]
+  }
+}
 ```
-Read the created plan back the same way you'd read any plan: `GET /plans` (filter/scan for the label) to get `primary_version.id`, then `GET /plans/{plan_id}/versions/{id}` for the full derived config.
 
-**Synchronous, but not instant** — unlike Optimizer/Forecaster creates, there is no `processing` state and nothing to poll: the request blocks while the plan is derived, then the 201 comes back with the plan already fully readable. It is not sub-second, though, and how long it takes varies by client and by plan — the date range, channel count, and volume of data behind the source optimization all matter. Don't add a poll loop, don't assume it returns immediately, and don't quote a fixed duration to the client. Set a generous request timeout (the default in most HTTP clients is fine; just don't tighten it to a couple of seconds).
+Read the created version back to confirm each setting landed as intended.
 
-Requires the source optimization to have `status == "success"` with results. An optimization that's still processing, errored, or was canceled is rejected with 422 — there's nothing to derive a budget from.
+**The budget table.** Same shape as the version budget CSV: an array of arrays.
+
+- Row 0 is the header. Its first cell is the literal string `date`; the rest are channel or contextual-variable names, matched **case-insensitively**.
+- Each later row is one day: the date in `YYYY-MM-DD`, then one value per header column. Ragged rows are rejected.
+- Day rows must cover `start_date`..`end_date` **exactly** — no gaps, no extra days, no duplicates, ascending order.
+- Cells must parse as a number >= 0 (strings or JSON numbers both fine). Decimals and very large values round-trip exactly, no rounding. **A blank cell is coerced to `0`, not rejected** — quiet data loss for a caller who meant to send a value, and indistinguishable downstream from a deliberate zero.
+- An all-zero (or all-blank) budget is a valid no-spend plan and is accepted, reporting `total_spend: 0`. Only a *structurally* empty budget fails: missing `budget`, `[]`, or a header row with no day rows.
+
+**Which channel names are valid.** The universe is the deployments backing the client's **KPIs** — not every active deployment. A channel belonging to an active deployment that backs no KPI is rejected as unknown. Use the discovery sequence in Recommended Workflow. Recency is *not* the rule: KPI-linked deployments with different data end dates all contribute channels.
+
+- At least one channel column is required — a budget of only contextual variables is rejected.
+- Non-spend channels can be columns. A non-spend channel you omit is **absent from the plan** (not predicted for you) — unlike a contextual variable.
+- Contextual variables you omit fall back to the model's most recent value. The budget CSV comes back with a column for **every** CV the models know, whether or not you sent it, so a read-back column is not proof you supplied it.
+- `compatible_kpis` is only non-empty when the budget covers all of that model's channels (spend *and* non-spend). A partial budget yields a plan whose KPIs are all in `incompatible_kpis` — check this on the read-back if the client intends to forecast the plan, because nothing in the 201 warns you.
+
+**Lower funnel channel caps.** Array of `{channel_name, option, cap?}`:
+
+| option | Meaning | Requirement |
+|---|---|---|
+| `uncapped` | predicted from upper funnel activity | — |
+| `capped` | predicted, up to a period maximum | `cap` required, must be > 0 |
+| `off` | channel excluded from the plan | — |
+| `manual` | you supply the spend (UI calls this "provided") | the channel **must** have its own budget column |
+
+An omitted lower funnel channel defaults to `manual` if it has a budget column, uncapped otherwise. A cap naming a non-lower-funnel channel, or an unknown channel, is rejected.
+
+**Spikes.** `spike_type` defaults to `"model"` (use the models' own spikes). `"custom"` lets you send `depvar_spike_groups` — and `"custom"` with no groups is valid (a plan with no spikes). Sending `depvar_spike_groups` without `spike_type: "custom"` is **rejected**, not ignored. Within a group: `spike_name` must be known to one of the models, `depvar_slug` must be one of the KPI depvar slugs, `dates` must be non-empty and every date must fall inside the plan's range.
+
+**Date bounds.** Beyond `end_date` > `start_date` (so the shortest plan is two days):
+
+- `start_date` may not precede the models' data start date.
+- `end_date` may not be more than **730 days** past the models' data end date — and that limit is derived from the **earliest-ending** KPI-linked model, not the latest. A client whose oldest KPI-linked model stopped years ago may not be able to take a future-dated plan at all. Compute the limit as `min(end_date across KPI-linked deployments) + 730` before you offer a date range.
+
+**When a client can't build plans at all.** If the same channel *name* is upper funnel in one KPI-linked model and lower funnel in another, plans are ambiguous and every create is refused with 422 — regardless of which channels the budget names. The message arrives under `error.details.base` (not a field key) and names the offending channels. If you see this, the answer is a model configuration fix, not a payload fix.
 
 | Status | Meaning |
 |---|---|
 | 201 | Created — `{"id": "..."}` |
-| 400 | Missing required parameter — blank body, missing `form`, missing `optimization_id`/`label`, or an empty-string `label` (treated as not provided, not as an invalid value) |
-| 404 | Client not found (an inaccessible-but-real client slug can also surface as 403, same as read endpoints elsewhere in this API) |
-| 422 | Validation failed — non-existent or malformed `optimization_id`, or a real optimization whose `status` isn't `success` |
+| 400 | Missing required parameter — blank body, missing `form` wrapper, missing `optimization_id`/`label`, an empty-string or whitespace-only `label` (treated as not provided, not as an invalid value), or malformed JSON |
+| 401 | Missing or invalid token |
+| 403 / 404 | Client not found or not reachable by this token |
+| 422 | Validation failed — `error.details` keyed by the field at fault (`budget`, `end_date`, `label`, `lower_funnel_channel_caps`, `spike_type`, `depvar_spike_groups`, or `base`). Also: a duplicate `label`, a non-existent/malformed `optimization_id`, or a real optimization whose `status` isn't `success` |
+
+### Create version (edit a plan) — `POST /v1/clients/{client_slug}/plans/{plan_id}/versions`
+
+The only way to change a plan. Copies the plan's primary version, applies your diff, and makes the result the new primary version. The version you edited stays in history, **immutable** — that immutability is the reason this is a POST and not a PATCH.
+
+```json
+{
+  "base_version_id": "4b026308-cce1-42f0-a1ac-2b6b902766ec",
+  "form": { "budget": [["date","meta","google"], ["2026-07-01","1100","2000"]] }
+}
+```
+
+Both keys required. See **Writes: the two rules that bite** for `base_version_id` and the budget-replaces-wholesale semantics — they are the two things to get right here.
+
+**Exactly four editable fields.** `PlanVersionCreateForm` is `additionalProperties: false`, so anything else is rejected with a 422:
+
+| Field | Notes |
+|---|---|
+| `budget` | A **sparse patch** — only the cells you send are written. Every date must fall inside the base version's range |
+| `lower_funnel_channel_caps` | Merged per channel; unlisted channels keep the base version's cap |
+| `spike_type` | `"model"` or `"custom"`. Switching back to `"model"` stops surfacing the custom groups (`depvar_spike_groups` reads back empty) |
+| `depvar_spike_groups` | Only alongside `spike_type: "custom"` |
+
+Rejected with 422: `label`, `start_date`, `end_date`, `optimization_id`, and any unknown key. **The date range is not editable** — the new version keeps the base version's window, which is why every date in a submitted budget must fall inside it. A different date range means a new plan, not a new version. **Version labels are auto-generated** ("Plan Version 2 <timestamp>"); the form takes no `label`, so don't offer renaming — renaming and deleting a version are UI-only.
+
+**The primary flag only moves forward.** Creating a version is the only thing that changes which version is primary, and nothing — API or UI — can point it back at an earlier version. To "revert", read the old version's budget and post it as a new version.
+
+**How the budget patch merges.** Only the `(date, column)` cells present in your table are written:
+
+- A channel you omit keeps its budget. A date you omit keeps its row. A contextual variable you omit keeps the **base version's** value (it is *not* reset to the model default).
+- You can **add** a channel that wasn't in the base budget by giving it a column.
+- You cannot **remove** a channel — set it to `0`, which zeroes the spend but leaves the channel in the plan and in `budget_summary.spend_channels`.
+
+**What the patch must still satisfy:** every date inside the base version's range (a table that is entirely outside, or that *mixes* in-range and out-of-range rows, is a 422 blaming `budget`); no repeated dates; a `date` first header cell; known channel/CV columns; values >= 0; and at least one day row (header-only is rejected). It does **not** have to cover the whole range or every channel, and rows do **not** have to be in ascending date order — both of those are create-only requirements.
+
+**After a 201:** the new version is `primary: true`, the base version flips to `primary: false` (its `updated_at` moves; nothing else about it changes), the plan has exactly one more version, and the Index's `primary_version` points at the new one. Every earlier version still reports the budget it was created with — chain as many edits as you like.
+
+| Status | Meaning |
+|---|---|
+| 201 | Created — `{"id": "..."}` |
+| 400 | Missing `form`, an **empty `{}` form** (a no-change diff is refused rather than minting an identical version), or a missing / `null` / **empty-string** `base_version_id`; also malformed JSON. `error.details` names the parameter |
+| 401 | Missing or invalid token — checked before the body, so a malformed unauthenticated request still reports 401 |
+| 404 | No such plan under this client. A malformed (non-UUID) plan id also returns 404 |
+| 409 | `base_version_id` is not the plan's current primary version. Body is a plain `ErrorResponse`: `error.message` only, **no `error.details`**. Covers a superseded id, an unknown UUID, and a malformed non-UUID string. A version id belonging to a *different* plan lands here or on 404 — treat both as "wrong base" |
+| 422 | Validation failed — `error.details` keyed by the field at fault, same as create |
+
+Note the split on `base_version_id`: an unusable-but-present value is a **409** (it simply isn't this plan's primary version), while an absent one — missing, `null`, or `""` — is a **400**. Don't collapse the two in error handling; a 409 means "re-read and retry", a 400 means "your request is malformed".
 
 ### Index — `GET /v1/clients/{client_slug}/plans`
 
@@ -259,6 +418,9 @@ Relationships worth relying on (all verified against the dev API):
 
 ### PlanCreateForm (create request body)
 
+Two mutually exclusive shapes.
+
+From an optimization:
 ```json
 {
   "optimization_id": "integer — the source optimization's id; must have status: success with results",
@@ -266,13 +428,86 @@ Relationships worth relying on (all verified against the dev API):
 }
 ```
 
-### PlanCreateResponse (create response, 201)
+From scratch:
+```json
+{
+  "label": "string — required, non-empty, non-whitespace, unique across the client's plans",
+  "start_date": "YYYY-MM-DD — required; not before the models' data start date",
+  "end_date": "YYYY-MM-DD — required; strictly after start_date; at most 730 days past the EARLIEST-ending KPI-linked model's data end",
+  "budget": "PlanBudgetTable — required; must cover start_date..end_date exactly",
+  "lower_funnel_channel_caps": "[LowerFunnelChannelCap] — optional; omitted channel defaults to manual if it has a budget column, else uncapped",
+  "spike_type": "model (default) | custom",
+  "depvar_spike_groups": "[DepvarSpikeGroup] — optional; ONLY valid with spike_type: custom"
+}
+```
+
+### PlanVersionCreateForm (create-version request body)
+
+`additionalProperties: false` — unknown keys are **rejected** with 422.
+
+```json
+{
+  "base_version_id": "uuid string — required, TOP LEVEL (not inside form); must be the plan's CURRENT primary version",
+  "form": {
+    "budget": "PlanBudgetTable — optional; a SPARSE PATCH on the base version's table. Only the cells sent are written; dates must fall inside the base version's range, but need not cover it",
+    "lower_funnel_channel_caps": "[LowerFunnelChannelCap] — optional; merged per channel, unlisted channels keep the base version's cap",
+    "spike_type": "model | custom — optional",
+    "depvar_spike_groups": "[DepvarSpikeGroup] — optional; ONLY valid with spike_type: custom"
+  }
+}
+```
+
+Rejected inside `form`: `label`, `start_date`, `end_date`, `optimization_id`, anything unrecognised. An empty `form: {}` is a 400.
+
+### PlanBudgetTable
+
+Array of arrays. Row 0 is the header; rows 1..n are days.
+
+```json
+[
+  ["date", "meta", "google", "holiday"],
+  ["2026-07-01", "1000", "2000", "0"],
+  ["2026-07-02", "1000.55", "2000", "0"]
+]
+```
+
+Rules on **both** endpoints: header cell 0 must be the literal `"date"`; remaining cells are channel or contextual-variable names, matched **case-insensitively**, no duplicate columns; day rows are `YYYY-MM-DD` plus one value per header column, no ragged rows, no duplicate dates; cells parse as a number >= 0 (string or JSON number), decimals and very large values stored exactly, **a blank cell becomes `0`**; at least one day row.
+
+Rules that apply **only to `POST /plans`** (create), where the table is the whole budget: day rows must cover `start_date`..`end_date` exactly, in ascending order, and at least one channel column is required (CV columns alone are rejected).
+
+On **`POST /plans/{plan_id}/versions`** the same table is a sparse patch: it may cover any subset of dates and columns, in any order, as long as every date falls inside the base version's range.
+
+### LowerFunnelChannelCap
+
+```json
+{
+  "channel_name": "string — must be a lower funnel channel of a KPI-linked model",
+  "option": "uncapped | capped | off | manual",
+  "cap": "number > 0 — required when option is capped, otherwise omitted"
+}
+```
+
+`manual` requires the channel to have its own column in the budget table.
+
+### DepvarSpikeGroup
+
+```json
+{
+  "spike_name": "string — a spike name known to one of the models",
+  "depvars": [
+    { "depvar_slug": "string — a depvar slug behind one of the client's KPIs",
+      "dates": ["YYYY-MM-DD — non-empty; every date inside the plan's range"] }
+  ]
+}
+```
+
+### PlanCreateResponse (create response, 201 — also the create-version response)
 
 ```json
 { "id": "uuid string" }
 ```
 
-No other fields. Read back the derived config via `GET /plans` (find by label) → `primary_version.id` → `GET /plans/{plan_id}/versions/{id}`.
+No other fields, on either endpoint. For a create, read back the config via `GET /plans` (find by label) → `primary_version.id` → `GET /plans/{plan_id}/versions/{id}`. For a version, the returned id *is* the new primary version's id, so you can read it directly.
 
 ### PlanSummary (Index item)
 
@@ -494,6 +729,18 @@ Absent entirely on forecasts that aren't tied to a Goal — check for the key, d
 |---|---|
 | "Turn this optimization into a plan" | `POST /plans` with `form: {optimization_id, label}` — only works if the optimization's `status` is `success` |
 | "Make a plan called 'X' from optimization 12345" | Same call: `optimization_id: 12345`, `label: "X"` |
+| "Build me a plan from this budget" / "create a plan from scratch" | Discovery first (`GET /kpis` → KPI-linked `GET /deployments/{id}`), then `POST /plans` with `form: {label, start_date, end_date, budget, ...}` |
+| "Make a plan for Q3 but I don't have a budget yet" | Point them at the optimization route — `POST /plans` with `optimization_id` derives the budget. Don't invent spend numbers |
+| "Change the budget on this plan" / "edit my plan" | `POST /plans/{plan_id}/versions` with `{base_version_id: primary_version.id, form: {budget: <full table>}}` |
+| "Bump Meta 10% on this plan" | Download the primary version's budget CSV to get the current numbers, then post a patch of just `[["date","meta"], ...]` — everything else is inherited |
+| "Set Meta to 1500 on 2 July" | No read needed. `form: {budget: [["date","meta"],["2026-07-02","1500"]]}` — a two-row patch changes that one cell |
+| "Take a channel off this plan" | Not possible — a version budget can't remove a channel. Set it to `0`; it stays in `budget_summary.spend_channels` with zero spend |
+| "Cap branded search at 50k on this plan" | `POST /plans/{plan_id}/versions` with `form: {lower_funnel_channel_caps: [{channel_name, option: "capped", cap: 50000}]}` — caps merge per channel, so no need to resend the others, and the budget is untouched |
+| "Push this plan out by a week" / "change the plan's dates" | Not possible on a version — dates aren't editable. A new date range means a new plan (`POST /plans` from scratch) |
+| "Rename this plan / version" or "delete this version" | Not in the API — UI only |
+| "Make v2 primary again" / "revert to the old version" | Not possible anywhere, API or UI — the primary flag only moves forward. Read the old version's budget and post it as a **new** version instead |
+| "Two of us are editing the same plan" | Explain the `base_version_id` lock: re-read `primary_version.id` immediately before each write; a 409 means someone else saved first, so re-read and re-apply |
+| "Which channel names can I use?" | `GET /kpis` for depvar slugs, then the deployments whose `dashboard_slug` matches — **not** every active deployment |
 | "Show me all my plans" | `GET /plans` (paginate as needed) |
 | "What plans are running right now?" | `GET /plans?status=current` |
 | "Find the plan called 'Q3 Growth Plan'" | `GET /plans?label=Q3` then match exactly on `label` client-side, or just filter server-side and take the match |
@@ -561,7 +808,211 @@ print(f"Created plan {plan_id}, version {version['version_number']}: "
 print("Spike groups:", [g["spike_name"] for g in version["depvar_spike_groups"]])
 ```
 
-### Scenario 2: List current plans and their total spend
+### Scenario 2: Build a plan from scratch
+
+```python
+from datetime import date, timedelta
+
+# 1. Resolve the channel universe from the models. The KPI scoping matters:
+#    an active deployment that backs no KPI advertises channels POST /plans
+#    rejects as unknown.
+kpis = requests.get(f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/kpis", headers=HEADERS).json()["data"]
+kpi_slugs = {d["slug"] for k in kpis for d in k["depvars"]}
+
+deps = requests.get(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/deployments",
+    headers=HEADERS, params={"active": "true", "per_page": 100},
+).json()["data"]
+
+models = []
+for d in deps:
+    if d["dashboard_slug"] not in kpi_slugs:
+        continue  # backs no KPI — its channels are not valid plan inputs
+    models.append(requests.get(
+        f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/deployments/{d['id']}", headers=HEADERS,
+    ).json())
+assert models, "No active deployment backs a KPI — a plan can't be built"
+
+spend       = {c for m in models for c in m["spend_channels_labels"]}
+lower       = {c for m in models for c in m["lower_funnel_channel_labels"]}
+upper       = {c for m in models for c in m["upper_funnel_channel_labels"]}
+cv_defaults = {k: v for m in models for k, v in m["contextual_variable_defaults"].items()}
+
+# A channel that is upper funnel in one KPI-linked model and lower funnel in
+# another makes plans ambiguous — every create 422s. Check before building.
+assert not (upper & lower), f"Dual-funnel channels block plan creation: {upper & lower}"
+
+# 2. Date bounds: not before the models' data start, and at most 730 days past
+#    the EARLIEST-ending model's data end (verified: a client with models ending
+#    2023-08-06 and 2025-06-22 is limited to 2025-08-05, i.e. the earlier one).
+model_start = min(date.fromisoformat(m["start_date"]) for m in models)
+end_limit   = min(date.fromisoformat(m["end_date"]) for m in models) + timedelta(days=730)
+
+# Plan the next 90 days, clamped to what the models can speak to. A client
+# whose oldest KPI-linked model stopped years ago can have end_limit in the
+# past, in which case no future-dated plan is possible at all — hence the
+# assert rather than silently building a window the API will reject.
+start = max(date.today() + timedelta(days=1), model_start)
+end   = min(start + timedelta(days=89), end_limit)
+assert end > start, \
+    f"No usable future window: the models only allow {model_start}..{end_limit}"
+
+# 3. Build the budget table from the DISCOVERED channel set, not a hand-written
+#    list. Every channel the models use needs a column or no KPI will be able to
+#    forecast the plan, and the only way to know the full set is the discovery
+#    above.
+non_spend = {c for m in models for c in m["non_spend_channels_labels"]}
+
+# What the client actually wants to spend, per channel per day.
+wanted  = {"meta": "1000", "google": "2000"}
+unknown = set(wanted) - spend - non_spend
+assert not unknown, f"Not channels of any KPI-linked model: {unknown}"
+
+# Channels the client didn't budget for still get a column, at 0. "Planned to
+# spend nothing" and "left out of the plan" are different things: the first
+# keeps the KPI forecastable, the second is what makes it incompatible.
+channels = {c: wanted.get(c, "0") for c in sorted(spend | non_spend)}
+
+# Contextual variables may be omitted — they fall back to the model's most
+# recent value — but sending them makes the plan explicit about what it assumes.
+cvs = {k: str(v) for k, v in cv_defaults.items()}
+
+columns = list(channels) + list(cvs)
+days    = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+budget  = [["date"] + columns] + [
+    [d.isoformat()] + [channels.get(c, cvs.get(c)) for c in columns] for d in days
+]
+
+form = {
+    "label": "Q3 Growth Plan",
+    "start_date": start.isoformat(),
+    "end_date": end.isoformat(),
+    "budget": budget,
+    # Every lower funnel channel gets an explicit entry, so nothing falls
+    # through to the omission default by accident. 'manual' is the right option
+    # here because the table above gives every channel a column, which is what
+    # "provided" spend means. If you'd rather the model predict a lower funnel
+    # channel's spend, use 'uncapped' and drop it from `channels` instead.
+    "lower_funnel_channel_caps": [
+        {"channel_name": c, "option": "manual"} for c in sorted(lower)
+    ],
+}
+
+resp = requests.post(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans", headers=HEADERS, json={"form": form},
+)
+# 422 details are keyed by the offending field — surface them, don't swallow.
+assert resp.status_code == 201, f"{resp.status_code}: {resp.text}"
+plan_id = resp.json()["id"]
+
+# 4. Read back and check forecastability. Nothing in the 201 warns you that the
+#    budget was too thin for any KPI. A new plan has exactly one version.
+versions = requests.get(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan_id}/versions", headers=HEADERS,
+).json()["data"]
+version = requests.get(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan_id}/versions/{versions[0]['id']}",
+    headers=HEADERS,
+).json()
+print(f"Created {plan_id}: total_spend={version['total_spend']}, "
+      f"compatible KPIs={[k['label'] for k in version['compatible_kpis']]}")
+if not version["compatible_kpis"]:
+    print("No KPI can forecast this plan — the budget is missing channels the models need:",
+          [k["label"] for k in version["incompatible_kpis"]])
+```
+
+### Scenario 3: Edit a plan — patch one channel as a new version
+
+```python
+import io as _io
+import pandas as pd
+
+plan_id = "8d777078-044e-4e3d-8d95-8dc14daf8d93"   # from GET /plans, or the Plans tab URL
+CHANNEL, FACTOR = "meta", 1.10
+
+def primary_version(plan_id):
+    """Always re-read this immediately before a write — it is the optimistic lock."""
+    versions = requests.get(
+        f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan_id}/versions",
+        headers=HEADERS, params={"per_page": 100},
+    ).json()["data"]
+    return next(v for v in versions if v["primary"])
+
+def budget_df(plan_id, version_id):
+    csv = requests.get(
+        f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan_id}/versions/{version_id}/budget",
+        headers={**HEADERS, "Accept": "text/csv"},
+    )
+    csv.raise_for_status()
+    return pd.read_csv(_io.StringIO(csv.text))
+
+# Retry loop, because a 409 means someone else saved a version between our read
+# and our write. Re-read, re-apply, resend — never resend the same base id.
+for attempt in range(3):
+    base = primary_version(plan_id)
+
+    # We only need the current budget because this edit is RELATIVE (×1.10).
+    # For an absolute value ("set meta to 1500 on 2 July") skip this entirely
+    # and post the patch straight away.
+    df = budget_df(plan_id, base["id"])
+    assert CHANNEL in df.columns, f"{CHANNEL} is not in this plan's budget"
+
+    # The version budget is a sparse PATCH: send only date + the one column.
+    # Every other channel, date and contextual variable is inherited from the
+    # base version. Do NOT pad the table with the channels you aren't changing,
+    # and never pad with zeros — that would zero them.
+    patch = [["date", CHANNEL]] + [
+        [str(d), str(v * FACTOR)] for d, v in zip(df["date"], df[CHANNEL])
+    ]
+
+    resp = requests.post(
+        f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan_id}/versions",
+        headers=HEADERS,
+        json={"base_version_id": base["id"], "form": {"budget": patch}},
+    )
+    if resp.status_code == 409:
+        print("Someone else saved a version first; re-reading and retrying.")
+        continue
+    assert resp.status_code == 201, f"{resp.status_code}: {resp.text}"
+    new_id = resp.json()["id"]
+    print(f"New primary version {new_id} (was {base['id']})")
+    break
+else:
+    raise RuntimeError("Gave up after repeated 409s — the plan is being actively edited")
+
+# Show total_spend so an unintended change is visible before anyone relies on it.
+after = requests.get(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan_id}/versions/{new_id}", headers=HEADERS,
+).json()
+print(f"total_spend {base['total_spend']} -> {after['total_spend']}")
+
+# A single day: two rows, and nothing else in the plan moves.
+one_day = requests.post(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan_id}/versions",
+    headers=HEADERS,
+    json={
+        "base_version_id": primary_version(plan_id)["id"],
+        "form": {"budget": [["date", CHANNEL], ["2026-07-02", "1650"]]},
+    },
+)
+assert one_day.status_code == 201, f"{one_day.status_code}: {one_day.text}"
+
+# Caps only? Omit the budget entirely. Caps merge per channel, so unlisted
+# lower funnel channels keep their settings.
+caps_only = requests.post(
+    f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan_id}/versions",
+    headers=HEADERS,
+    json={
+        "base_version_id": primary_version(plan_id)["id"],
+        "form": {"lower_funnel_channel_caps": [
+            {"channel_name": "branded_search", "option": "capped", "cap": 50000}
+        ]},
+    },
+)
+assert caps_only.status_code == 201, f"{caps_only.status_code}: {caps_only.text}"
+```
+
+### Scenario 4: List current plans and their total spend
 
 ```python
 import os, requests
@@ -583,7 +1034,7 @@ for plan in resp.json()["data"]:
     print(f"{plan['label']} ({plan['plan_type']}): total_spend={spend}")
 ```
 
-### Scenario 3: Pull the primary version's full config for a named plan
+### Scenario 5: Pull the primary version's full config for a named plan
 
 ```python
 plans = requests.get(
@@ -603,7 +1054,7 @@ print("Compatible KPIs:", [k["label"] for k in version["compatible_kpis"]])
 print("Incompatible KPIs:", [k["label"] for k in version["incompatible_kpis"]])
 ```
 
-### Scenario 4: Download the budget CSV for the primary version
+### Scenario 6: Download the budget CSV for the primary version
 
 ```python
 import io, pandas as pd
@@ -619,7 +1070,7 @@ df.to_csv("plan_budget.csv", index=False)
 print(f"Saved plan_budget.csv ({len(df)} rows, columns: {list(df.columns)})")
 ```
 
-### Scenario 5: Compare total_spend across all versions of a plan
+### Scenario 7: Compare total_spend across all versions of a plan
 
 ```python
 versions = requests.get(
@@ -633,7 +1084,7 @@ for v in versions:
     print(f"{v['version_number']}{marker}: total_spend={v['total_spend']}, created_at={v['created_at']}")
 ```
 
-### Scenario 6: Pull a plan version's forecast, plus its planned-vs-actual counterfactuals
+### Scenario 8: Pull a plan version's forecast, plus its planned-vs-actual counterfactuals
 
 ```python
 # 1. altcast_types is a swap, not an additive filter: omitting it returns only
@@ -675,7 +1126,7 @@ for altcast_type, summary in altcast_summaries.items():
     print(f"Counterfactual ({altcast_type}): expected_outcome={outcome}")
 ```
 
-### Scenario 7: Reconstruct the UI's Counterfactual summary (planned vs. actual)
+### Scenario 9: Reconstruct the UI's Counterfactual summary (planned vs. actual)
 
 The UI's Counterfactual section shows a planned-vs-actual comparison for a specific window: **the counterfactual period**. Its `start_date`/`end_date` come directly from the counterfactual forecast's own response (the planned and actuals counterfactuals for the same plan version share the same window) — no need to compute it separately.
 
@@ -824,7 +1275,7 @@ print(f"In-sample Forecast Error %:  {in_sample_forecast_error_pct}")
 
 This is a best-effort reconstruction, not a guaranteed match to the UI — it still doesn't call the UI's actual `compute_plan_counterfactual` request. The core metric calculations (the cusum technique for all three forecasts, the period-scoped spend summing, and the derived ROI/error formulas) were validated end-to-end against a live account and produced sane, self-consistent numbers. The deployment-matching candidate-selection logic above wasn't exercised in that same run (the forecasts were selected manually) — treat it as a reasonable first pass, not verified. The exact "In-sample Forecast Error" sign/denominator convention also hasn't been checked against the UI. Verify both against a real account with known UI values before treating this as fully authoritative.
 
-### Scenario 8: Check spend adherence for a plan version
+### Scenario 10: Check spend adherence for a plan version
 
 ```python
 reports = requests.get(
@@ -870,7 +1321,7 @@ Both sides are scoped to `report_through_date`, so these deltas are like-for-lik
 
 ---
 
-### Scenario 9: Check whether a Goal is on pace
+### Scenario 11: Check whether a Goal is on pace
 
 ```python
 # 1. Find the goal. `status=current` means the model's data has reached the
@@ -942,7 +1393,7 @@ else:
 
 8. **Expecting `results` on a forecasts-list item** — `PlanForecastSummary` (from the list endpoints) is a summary only; it has no `form` or `results`. You must call the show endpoint (`GET /plans/{plan_id}/forecasts/{forecast_id}`) for each forecast you need outcome data from.
 
-9. **Assuming Plans has no create endpoint at all** — It does now, but narrowly: `POST /plans` only *derives* a plan from a successful optimization's results (see Create above). There's still no way to build a plan from scratch or edit an existing one via the API — point clients to the UI for either of those. Also: fields beyond `form.optimization_id`/`form.label` aren't accepted, and can't override any derived value — budget, dates, spikes, and lower-funnel caps always come from the optimization.
+9. **Assuming Plans is read-only, or that create only works from an optimization** — Both are stale. `POST /plans` takes either `{optimization_id, label}` *or* a full from-scratch form, and `POST /plans/{plan_id}/versions` edits a plan by adding a version. What genuinely isn't in the API: renaming and deleting a plan or version (both UI-only). And re-pointing the primary version at an older version isn't possible anywhere, so don't send clients to the UI for it — a "revert" is a new version carrying the old numbers. On the optimization path specifically, fields beyond `optimization_id`/`label` still aren't accepted and can't override a derived value.
 
 10. **Not handling `null` on `status`, `label`, `total_spend`** — Several fields are nullable (a version can have no dates and thus no derived status). Guard for `None`/`null` before using these values. `primary_version`, by contrast, is never `null` — every plan has one.
 
@@ -957,6 +1408,24 @@ else:
 15. **Confusing adherence with counterfactuals** — Adherence compares planned vs. actual **spend** (an input audit, no modeling); counterfactuals compare modeled **outcomes**. "Are we on budget?" → adherence. "What did going off-plan cost us in revenue?" → counterfactuals. See the Adherence endpoint section for its other gotchas: empty index, `null` planned spend, no `nonspend_channels`.
 
 16. **Assuming a "planned" counterfactual's future segment matches the plan's regular forecast for the same dates** — It might not. The counterfactual's forward segment carries over prior spend from its own retroactive replay of the planned budget; the regular forecast carries over from real actual spend. Different upstream history can produce different downstream numbers.
+
+17. **Carrying budget semantics across the two write endpoints** — They differ. On `POST /plans` the table is the whole budget and must cover every day of the range. On `POST /plans/{plan_id}/versions` it is a sparse patch: omitted channels, dates and contextual variables are all inherited from the base version. Two failure modes fall out of this: sending a full table to *create* something you only meant to tweak is fine but noisy, while assuming a version budget replaces (and so padding it with zeros for the channels you didn't want to change) actively zeroes those channels. Send only what you mean to change. Note also that a version budget cannot remove a channel at all — `0` zeroes the spend but the channel stays in `budget_summary.spend_channels`.
+
+18. **Reusing a `base_version_id`, or reading it long before the write** — It must be the plan's *current* primary version at the moment of the request, and every successful write invalidates it (the new version becomes primary). Re-read `primary_version.id` immediately before each POST. Chaining two edits with the same base gets you a 201 then a 409.
+
+19. **Treating a 409 as a validation failure, or a missing `base_version_id` as a 409** — They mean opposite things. A **409** means "someone else saved first" → re-read the primary version, re-apply, resend; its body has `error.message` only, no `details`. A **400** means the parameter is absent (missing, `null`, or `""`) → the request is malformed. An unknown UUID and a malformed non-UUID both land on 409, not 404; another plan's version id can come back as either 409 or 404.
+
+20. **Offering to rename a version, change a plan's dates, or set an older version primary** — None of these exist. `PlanVersionCreateForm` accepts only `budget`, `lower_funnel_channel_caps`, `spike_type`, `depvar_spike_groups`; `label`/`start_date`/`end_date` are rejected with 422. Version labels are auto-generated, and a different date range means a new plan. Renaming and deleting are UI-only, but **don't send a client to the UI to make an old version primary again** — that isn't possible there either. The primary flag only moves forward; a revert is a new version carrying the old version's numbers.
+
+21. **Enumerating channels from `GET /deployments?active=true`** — That's the discovery trap. The plan form's channel universe is the deployments backing the client's **KPIs**; an active deployment that backs no KPI advertises channels `POST /plans` rejects as unknown, blaming `budget`. Go via `GET /kpis` → `depvars[].slug` → the deployments whose `dashboard_slug` matches.
+
+22. **Computing the plan's latest allowed end date from the newest model** — It's derived from the **earliest-ending** KPI-linked model plus 730 days. A client with one stale KPI-linked model can have a limit in the past, meaning no future-dated plan is possible at all. Compute `min(end_date) + 730 days` across KPI-linked deployments, not `max`.
+
+23. **Trusting a 201 to mean the plan is forecastable** — `compatible_kpis` is only populated when the budget covers all of a model's channels (spend *and* non-spend), so a thin budget creates a plan no KPI can forecast, with no warning in the response. Always read the version back and check what actually landed.
+
+24. **Reading a blank budget cell as "no value"** — It's coerced to `0` on both endpoints, not rejected. A cell the caller forgot to fill is indistinguishable from a deliberate zero, and nothing downstream flags it. Validate the table before sending.
+
+25. **Assuming a version budget has to cover the full range, or be in date order** — Neither is true; both are create-only rules. A version patch may name one day and one channel, in any order. What it may *not* do is name a date outside the base version's range — including a table that mixes one in-range row with one out-of-range row, which is rejected wholesale rather than partially applied.
 
 ---
 
@@ -978,6 +1447,20 @@ else:
 
 - `altcast_types` **is a swap, not an additive filter, and it validates its value.** Omit the param entirely to get only the plan's regular, forward-looking forecasts (counterfactuals are excluded by default). Pass it to get *only* counterfactuals of the requested kind(s) instead — there's no single call that returns regular and counterfactual forecasts mixed together. Passing a blank value or an unrecognized string returns **422**, not a silent no-op.
 
+- **Writes are rate limited, with no `Retry-After` header.** A burst of creates starts drawing **429** with a "Retry later" body. Roughly 20 writes/minute is safe. If you generate a script that makes more than a handful of creates, throttle it and retry through 429 (and 503) with a fixed backoff — otherwise a rate limit reads as a validation failure.
+
+- **A non-array `lower_funnel_channel_caps` on `POST /plans` is silently discarded, not rejected.** The caps shape validator only runs once the value is an array, so `"lower_funnel_channel_caps": "off"` returns **201** and the channel falls through to its omission default (manual if it has a budget column, uncapped otherwise). The caller gets no sign their settings were dropped. One level in, the check does fire: an array containing an empty object, or a single cap object sent instead of an array, both 422. Validate the field is a list before sending.
+
+- **A non-object `form` currently 500s** on both write endpoints (`{"form": "not-an-object"}`, or `form` as an array on the version endpoint). The type check reaches `form`'s fields but not `form` itself. It should be a 400/422; don't report a 500 here to the client as a server outage.
+
+- **An empty `form: {}` on the version endpoint is a 400, not a 201.** A no-change diff is treated as an absent parameter rather than minting an identical version. There is no way to "touch" a plan into a new version without changing something.
+
+- **A non-spend channel omitted from a from-scratch budget is absent from the plan**, not predicted for you. The Plans-creation QA checklist says it "should be predicted by spend forecast" — the API doesn't do that today. Contextual variables *do* fall back to a model default; non-spend channels don't. If the client wants a non-spend channel in the plan, give it a column.
+
+- **The plan's latest allowed `end_date` comes from the earliest-ending KPI-linked model.** Verified on a client with models ending 2023-08-06 and 2025-06-22: the API reports "can't be after 2025-08-05" — the *earlier* model's end plus 730 days. Clients whose oldest KPI-linked model stopped years ago cannot take a future-dated plan at all.
+
+- **The channel universe is the KPI-linked deployments, not the recent ones.** KPI-linked deployments with different data end dates all contribute valid channels; what's refused is a channel belonging to an active deployment that backs no KPI. Deployment recency is not the rule.
+
 ---
 
 ## Code Generation Rules
@@ -987,7 +1470,13 @@ else:
 - NEVER print, log, or display the token.
 - Base URL: `https://api.getrecast.com`
 - Auth: Bearer token in the Authorization header.
-- `POST` is supported only for creating a plan from a successful optimization (`POST /plans` with `form: {optimization_id, label}`). Never generate `PATCH`/`PUT`/`DELETE` against `/plans`, and don't attempt to build or edit a plan's config through the create call — only `optimization_id` and `label` are accepted; everything else is derived server-side.
+- Two `POST` endpoints exist: `POST /plans` (from an optimization, or from scratch) and `POST /plans/{plan_id}/versions` (edit a plan by adding a version). Never generate `PATCH`/`PUT`/`DELETE` against `/plans` — they don't exist, and there is no way to delete a plan or version at all.
+- **Writes leave permanent state.** There's no DELETE, so say so before generating a create, and label exploratory plans identifiably (prefix + timestamp).
+- **On an edit, send only the cells that change.** The version budget is a patch — don't pad it with the channels you aren't touching, and never pad with zeros. Fetch the base version's budget CSV first only when the edit is relative to current values. Print the resulting `total_spend` so an unintended change is visible.
+- **Always re-read `primary_version.id` immediately before a version POST**, and handle 409 by re-reading and retrying rather than by failing or by resending the same base id. Cap the retries.
+- **Surface `error.details` on a 422** — it's keyed by the offending field, which is the only actionable part of the response. Don't collapse it to a generic "validation failed".
+- **Throttle write loops** (~20/min) and retry through 429/503; write rate limits carry no `Retry-After`.
+- On the optimization create path, don't attempt to override any derived value — only `optimization_id` and `label` are accepted.
 - Set `Accept: text/csv` explicitly when downloading a version's budget.
 - Include error handling that shows the response body on non-200 responses.
 
@@ -1010,7 +1499,8 @@ else:
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/v1/clients/{client_slug}/plans` | Create a plan from a successful optimization's results (`form: {optimization_id, label}`) — synchronous, no polling |
+| POST | `/v1/clients/{client_slug}/plans` | Create a plan — either from a successful optimization (`form: {optimization_id, label}`) or from scratch (`form: {label, start_date, end_date, budget, ...}`). Synchronous, no polling. Returns `{id}` only |
+| POST | `/v1/clients/{client_slug}/plans/{plan_id}/versions` | Edit a plan by adding a version: `{base_version_id, form}` where `form` accepts only `budget`, `lower_funnel_channel_caps`, `spike_type`, `depvar_spike_groups`. The new version becomes primary; 409 if `base_version_id` isn't the current primary |
 | GET | `/v1/clients/{client_slug}/plans` | List plans (paginated: `?page=1&per_page=25`; filters: `plan_type`, `label`, `status`, `kpi_ids`, `created_by`) |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/versions` | List a plan's versions (paginated, same as the Index) |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/versions/{id}` | Show full version detail |
@@ -1023,7 +1513,7 @@ else:
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/adherence/{id}/downloads/{key}` | Download an adherence CSV: `all-channels-adherence` or `{channel-name}-adherence` |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/goals` | List a plan's Goals (paginated; filters: `kpi_id`, `status`) |
 
-There is no Goal show endpoint, and no create/update endpoints anywhere in the Plans API.
+There is no Goal show endpoint, no `PATCH`/`PUT`, and no `DELETE` anywhere in the Plans API. Renaming and deleting a plan or version are UI-only. Editing a plan's inputs is done by creating a new version, which is also the only way the primary flag moves — it never moves backwards, in the API or the UI.
 
 ### Index response
 
@@ -1062,6 +1552,14 @@ Filter examples: `?granularity=monthly`, `?granularity=total`, `?start_date=2026
 | Client says | API field / action |
 |---|---|
 | "turn this optimization into a plan", "save this optimization as a plan" | `POST /plans` (`form.optimization_id`, `form.label`) — requires the optimization's `status` to be `success` |
+| "build a plan", "create a plan from scratch", "make a plan from this budget" | `POST /plans` with the from-scratch form (`label`, `start_date`, `end_date`, `budget`, optional caps/spikes) |
+| "edit the plan", "change the budget", "save a new version" | `POST /plans/{plan_id}/versions` (`base_version_id` + a `form` diff) |
+| "base version", "the version I'm editing from" | `base_version_id` — must equal the plan's current `primary_version.id`, or you get a 409 |
+| "someone else changed it", "conflict", "stale" | The 409 on `POST /plans/{plan_id}/versions` — re-read the primary version and re-apply |
+| "provided spend" (lower funnel) | `option: "manual"` in `lower_funnel_channel_caps`, and the channel needs its own budget column |
+| "just change this one number" | A version budget is a sparse patch — send `date` plus the one column, only the rows you're changing |
+| "rename the plan", "delete this version" | Not in the API — UI only |
+| "make v2 primary", "revert to the previous version" | Not possible in the API or the UI — post the old version's numbers as a new version |
 | "plan", "media plan" | A Plan resource, `GET /plans` |
 | "live version", "current version" | `primary_version` (Index) / `primary: true` (versions list/show) |
 | "version history", "past versions" | `GET /plans/{plan_id}/versions` |

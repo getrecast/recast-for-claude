@@ -3,6 +3,33 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.6.0] - 2026-09-11
+
+### Added
+
+- **Plans skill: create a plan from scratch.** Users can create a Plan from
+  scratch by providing `label`, `start_date`/`end_date`, and a daily
+  `budget` table, plus optional `lower_funnel_channel_caps` and custom spikes
+  (`spike_type: "custom"` with `depvar_spike_groups`). `POST /plans` accepts
+  this form alongside the existing `form: {optimization_id, label}` path. The
+  skill also adds which channel names a plan accepts (the channels of the
+  deployments backing the client's KPIs) and how far out `end_date` may go.
+
+- **Plans skill: edit a plan by adding a version.**
+  `POST /plans/{plan_id}/versions` applies a change to the plan's primary
+  version and makes the result the new primary version; earlier versions stay
+  in history unchanged. Editable fields are `budget`,
+  `lower_funnel_channel_caps`, `spike_type` and `depvar_spike_groups` — the
+  date range and label are not editable. The version `budget` is a sparse
+  patch (only the cells you send change), and `base_version_id` must be the
+  plan's current primary version, otherwise the call returns 409 and creates
+  nothing.
+
+### Changed
+
+- **Plans skill: write-side quirks.** Plan writes are rate limited (roughly
+  20 per minute, 429 with no `Retry-After`).
+
 ## [1.5.0] - 2026-09-10
 
 ### Added
