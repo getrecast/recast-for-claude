@@ -3,6 +3,18 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.7.0] - 2026-09-18
+
+### Added
+
+- **Plans skill: create, edit and delete Goals.** Goals are no longer read-only.
+  `POST /plans/{plan_id}/goals` takes a `form` with five required fields- `kpi_id`, `name`,
+  `start_date`, `end_date` and `goal_value` and returns the new Goal's id. 
+  `PATCH /nplas/{plan_id}/goals/{goal_id}` is a partial update of
+  `name`, the dates, or `goal_value`, and `DELETE /nplas/{plan_id}/goals/{goal_id}` removes the
+  Goal.
+
+
 ## [1.6.0] - 2026-09-11
 
 ### Added

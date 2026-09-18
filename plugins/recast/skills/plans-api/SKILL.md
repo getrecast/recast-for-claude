@@ -1,11 +1,11 @@
 ---
 name: plans-api
-description: Use when reading, creating, or editing Recast Plans programmatically — "list my plans", "get a plan's budget", "pull a plan's forecast", "what changed between these two plan versions", "get counterfactual forecasts for this plan", "am I sticking to my plan's budget", "planned vs actual spend", "turn this optimization into a plan", "save this optimization as a plan", "build a plan from this budget", "create a plan from scratch", "change the budget on this plan", "edit my plan", "bump Meta's spend and save it", "save a new version of this plan", "what are my goals on this plan", "am I on track to hit my target", "what is my goal pacing". Translates plan goals into API requests for retrieving plans, versions, budgets, forecasts/counterfactuals, spend adherence and Goals, for creating plans (from scratch, or derived from a successful optimization), and for editing a plan by creating a new plan version. Renaming a plan and deleting a plan is still UI-only.
+description: Use when reading, creating, or editing Recast Plans programmatically — "list my plans", "get a plan's budget", "pull a plan's forecast", "what changed between these two plan versions", "get counterfactual forecasts for this plan", "am I sticking to my plan's budget", "planned vs actual spend", "turn this optimization into a plan", "save this optimization as a plan", "build a plan from this budget", "create a plan from scratch", "change the budget on this plan", "edit my plan", "bump Meta's spend and save it", "save a new version of this plan", "what are my goals on this plan", "am I on track to hit my target", "set a goal on this plan", "create a goal", "change my goal target", "rename this goal", "delete this goal". Translates user requests related to their plans into API requests for retrieving plans, versions, budgets, forecasts/counterfactuals, spend adherence and Goals, for creating plans (from scratch, or derived from a successful optimization), and for editing a plan by creating a new plan version. Renaming a plan and deleting a plan is still UI-only.
 ---
 
 # Recast Plans API — Reading, Creating, and Versioning Plans
 
-You are helping a Recast client work with their **Plans** (the Plans tab of the app) programmatically. Plans can be **read**, **created** (from scratch, or derived from a successful Optimizer run), and **edited** — where editing means adding a new version to the plan. What is still UI-only: renaming a plan or deleting a plan (https://docs.getrecast.com/docs/plans).
+You are helping a Recast client work with their **Plans** (the Plans tab of the app) programmatically. Plans can be **read**, **created** (from scratch, or derived from a successful Optimizer run), and **edited** — where editing means adding a new version to the plan. Goals on a plan can be **created**, **edited** and **deleted** outright. What is still UI-only: renaming a plan or deleting a plan (https://docs.getrecast.com/docs/plans).
 
 Most asks are still retrieval: finding the right plan, the right version, and the right data (config, budget, forecast, adherence, Goals) to pull. But when a client wants a plan built or changed, do it through the API rather than sending them to the UI — and read the **Writes: the two rules that bite** section below before you generate any create or version code, because the `budget` field means something different on each of the two write endpoints, and the `base_version_id` lock is easy to get wrong.
 
@@ -64,7 +64,7 @@ Write a single, self-contained script following the Code Generation Rules below.
 | **Counterfactual / altcast_type** | A *retroactive* re-forecast of already-elapsed (in-sample) days, using the **current/latest model** rather than whatever model existed at the time — not a forward-looking prediction. Not a single comparison object either — two separate ordinary Forecast results, distinguished by `altcast_type`: `null` (the plan's regular, forward-looking forecast), `"planned"` (what the current model predicts the plan's **originally specified budget** would have produced over those historical days), or `"actuals"` (what the current model predicts the **actual spend** that occurred would have produced). No combined "planned vs. actual" payload; diffing the two is a client-side exercise. |
 | **Recommendations** | Suggested budget reallocations to improve a forecasted outcome, at Conservative / Moderate / Aggressive risk levels. Available on all Forecasts associated with a Plan (see the forecaster-api skill for the `run_recommendations` flag). |
 | **Adherence** | Planned vs. actual **spend** per channel for one plan version — the app's Adherence section. Input comparison only: no modeling, no KPI, no ROI. A new report is created each time new spend data lands, and both sides are scoped to that report's `report_through_date` (so `planned_spend` is not the plan's whole-period total). |
-| **Goal** | A target on a KPI inside a Plan, over a date range within the Plan's period. A Plan can have several Goals, and their ranges may overlap; the budget and channels behind a Goal come from the Plan. **Its `status` does not follow the `status` row above:** a Goal's status is derived from the last date of data the model has, not from today's date, so a Goal whose window has already opened can still be `future`. Read-only, and there is no Goal show endpoint — pacing and probability come from the Goal's forecast (`goal_highlights`). |
+| **Goal** | A target on a KPI inside a Plan, over a date range within the Plan's period. A Plan can have several Goals, and their ranges may overlap; the budget and channels behind a Goal come from the Plan. **Its `status` does not follow the `status` row above:** a Goal's status is derived from the last date of data the model has, not from today's date, so a Goal whose window has already opened can still be `future`. Goals can be created, edited and deleted through the API. Pacing and probability come from the Goal's forecast (`goal_highlights`). |
 
 ---
 
@@ -342,9 +342,9 @@ What actually trips up code:
 
 A Goal is a target on a KPI inside a plan, over a date range within the plan's period. Nested under the plan like forecasts and adherence. A plan can have several Goals, and their ranges may overlap. Paginated: `{"data": [...], "pagination": {...}}`.
 
-Query filters: `kpi_id` (UUID) and `status` (one or more of `expired`/`current`/`future`, comma-separated or repeated as `status[]=`), plus `page`/`per_page`.
+Query filters: `kpi_id` and `status` (one or more of `expired`/`current`/`future`, comma-separated or repeated as `status[]=`), plus `page`/`per_page`.
 
-**There is no Goal show endpoint.** The index gives you the Goal's identity and target; everything else — pacing, success probability, the spend/KPI/ROI breakdown — comes from showing the Goal's forecast. Each Goal carries a `forecast_id` for its latest forecast, so that is one hop:
+**There is no Goal show endpoint.** The index gives you the Goal's identity and target; everything else — pacing, success probability, the spend/KPI/ROI breakdown — comes from showing the Goal's forecast. Each Goal carries a `forecast_id` for its latest forecast:
 
 ```
 GET /plans/{plan_id}/goals                        → find the goal, note its forecast_id
@@ -354,19 +354,69 @@ GET /plans/{plan_id}/forecasts/{forecast_id}      → goal_id + goal_highlights 
 GET /plans/{plan_id}/forecasts?goal_id={goal_id}  → every forecast for that goal
 ```
 
-Don't reach for `/goals/{id}` or `/goals/{id}/forecasts` — neither exists, both 404.
+Don't reach for `GET /goals/{id}` or `/goals/{id}/forecasts` — neither exists, both 404. The `/goals/{goal_id}` path itself is real, but only for `PATCH` and `DELETE` (below).
 
 What actually trips up code:
 
 - **`status` is relative to the model's data end, not to today.** This is the big one. A Goal is `future` while its window sits beyond the last date of data the model has, *even if that window has already opened on the calendar*. A Goal running 1–31 August is still `future` in mid-August when the model has data through 4 July. `current` means the data end falls inside the window; `expired` means the whole window is behind it. Never compute or "correct" a Goal's status from `date.today()` — you will disagree with the API and with the UI. If you need the reference date, it is the `end_date` of the KPI's active deployment (a KPI's depvar slugs match its deployments' `dashboard_slug`).
-- **`id` is an integer**, unlike plan and version ids which are UUIDs. `kpi_id` is still a UUID.
+- **`id` is an integer**
 - **An unknown `kpi_id` returns 404, not an empty list** — the filter is resolved against the client's KPIs. An invalid `status` returns 422 with the field named in `error.details`. Neither filter is silently ignored.
 - **Don't assume a Goal's KPI is still compatible with the plan version.** The KPI is chosen from the compatible set when the Goal is created, but it can drift out of that set afterwards if the plan or model changes — the Goal keeps its `kpi_id` and the app raises a compatibility warning. So a Goal's `kpi_id` may appear in the version's `incompatible_kpis` rather than `compatible_kpis`. Never resolve a Goal's KPI by looking it up in `compatible_kpis` alone (you'll get a `None` and a crash); use the Goal's own `kpi_label`, or search both lists. If a Goal has no usable forecast, an incompatible KPI is a likely cause worth reporting to the user.
-- **The target field is `goal_value`, not `value`.** Renamed 2026-08-27; older examples and the original API spec show `value`. Reading `goal["value"]` now yields a KeyError / NULL.
+- **The target field is `goal_value`.**
 - **`forecast_id` is the goal's latest forecast — use it for current pacing.** Show it directly; there is no need to list the goal's forecasts and sort them. Use the `?goal_id={id}` filter only when you actually want the goal's *history* (how the projection and probability shifted over time), in which case sort by `created_at` yourself rather than trusting list order.
-- **A goal retains its full forecast history, and each forecast's `goal_highlights` reflect the target in force when it ran.** So when walking history, an older forecast's `pacing`/`success_probability` can reference a target that has since been edited — correct as a record of that moment, but not current. Never present an older forecast's pacing as today's number; that is what `forecast_id` is for.
+- **A goal retains its full forecast history, and each forecast's `goal_highlights` reflect the target in force when it ran.** So when walking history, an older forecast's `pacing`/`success_probability` can reference a target that has since been edited — correct as a record of that moment, but not current. Never present an older forecast's pacing as today's number
 - **`processing_status` is separate from `status`** — it reports whether the Goal's forecast has finished computing (`success`), while `status` is about where the window sits relative to data. A Goal can be `current` with a `processing_status` that isn't yet `success`.
 - **An empty index is a valid answer** — a plan with no Goals returns 200 with empty `data`. Report it as "no goals set", don't retry.
+
+### Create a Goal — `POST /v1/clients/{client_slug}/plans/{plan_id}/goals`
+
+Attaches a Goal to the **plan**, not to a version, so it survives new versions. Body uses the same `{"form": {...}}` envelope as the plan writes.
+
+```json
+{
+  "form": {
+    "kpi_id": "868d6c9f-a7b7-4050-9e99-c8e54965c718",
+    "name": "Q3 Revenue Goal",
+    "start_date": "2026-07-01",
+    "end_date": "2026-09-30",
+    "goal_value": 1500000
+  }
+}
+```
+
+All five fields are required. Returns `201` with `{"id": 42}`, an integer like the index's `id`.
+
+What actually trips up code:
+
+- **`goal_value` is an integer, and a decimal is rejected rather than rounded.** `1500000.0` is a 422, not a silent floor. This bites hardest in Python, where `target * 1.1` yields a float, so cast with `int()` before sending.
+- **`kpi_id` must be in the plan primary version's `compatible_kpis`.** Read `GET /plans/{plan_id}/versions/{version_id}` and pick from that list. Don't take a KPI id from `GET /kpis` and hope it is compatible.
+- **Both dates must sit inside the plan's period *and* inside the KPI's forecast horizon.** the KPI's forecast horizon is 730 days after the minimum model date
+- **You cannot add a Goal to the `default` plan, or to a plan whose period has already ended.**
+- **The forecast is asynchronous.** Create returns immediately and the Goal appears with `processing_status: "pending"`. Poll `GET /plans/{plan_id}/goals` until it reaches `success` before reading `forecast_id`. A 201 does not mean the pacing is ready.
+- **`503` is a real outcome here.** It means the plan service is unavailable, not that the payload is wrong, and it is safe to retry. A 422 is not.
+
+### Edit a Goal — `PATCH /v1/clients/{client_slug}/plans/{plan_id}/goals/{goal_id}`
+
+Partial update. Only the fields you send change, and `goal_id` is the integer from the index.
+
+```json
+{ "form": { "goal_value": 1800000 } }
+```
+
+Editable: `name`, `start_date`, `end_date`, `goal_value`. Returns `200` with `{"id": 42}`.
+
+- **`kpi_id` is not editable.** Retargeting a Goal at a different KPI means deleting it and creating a new one. There is no in-place route.
+- **A rename alone does not re-run the forecast. Any other change does.** So `{"name": "..."}` is cheap and leaves `forecast_id` pointing at the existing forecast, while a `goal_value` change queues a new forecast and puts `processing_status` back to pending.
+- **An expired Goal accepts only `name`.** Every other field is rejected once the window has closed, and "expired" here is the data-relative `status`, not the calendar.
+- **`name` cannot be cleared**
+- There is no `PUT`. Don't send a full object expecting replacement semantics, because unsent fields are always kept.
+
+### Delete a Goal — `DELETE /v1/clients/{client_slug}/plans/{plan_id}/goals/{goal_id}`
+
+No body. Returns `204` with an empty body, or `404` if the Goal doesn't exist.
+
+- **This also deletes every forecast the Goal produced**, so the record of how the projection moved goes with it. It cannot be undone. Confirm with the client before calling it, especially if they have been tracking the Goal over time.
+- This is the **only** `DELETE` in the Plans API. Plans and versions still have none.
 
 ### Goal highlights (on the forecast show response)
 
@@ -701,6 +751,35 @@ List items carry `id` (integer — the adherence report's own id), `plan_version
 
 Wrapped in the usual `{"data": [...], "pagination": {...}}`. There is no Goal detail schema — the index item above is the whole Goal payload, and the rest lives on the forecast show response as `goal_id` + `goal_highlights`.
 
+### GoalCreateForm (create request body)
+
+Sent as `{"form": {...}}`.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `kpi_id` | string (UUID) | yes | Must appear in the plan primary version's `compatible_kpis` |
+| `name` | string | yes | |
+| `start_date` | string (date) | yes | On or after the plan's start date |
+| `end_date` | string (date) | yes | On or before the plan's end date, and inside the KPI model's forecast horizon |
+| `goal_value` | integer | yes | Minimum 1. Whole numbers only; a decimal is a 422 rather than a rounded value |
+
+Response `201`: `{"id": 42}`. Errors: `422` validation, `400` missing parameter, `404` plan not found, `503` plan service unavailable.
+
+### GoalUpdateForm (update request body)
+
+Sent as `{"form": {...}}`. Every field is optional and anything omitted keeps its current value.
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | Cannot be cleared |
+| `start_date` | string (date) | Cannot move before the KPI's model date |
+| `end_date` | string (date) | Cannot move before the KPI's model date |
+| `goal_value` | integer | Minimum 1, whole numbers only |
+
+`kpi_id` is not part of the update form and cannot be changed once the Goal exists. A Goal whose window has closed accepts only `name`.
+
+Response `200`: `{"id": 42}`. Errors: `422`, `400`, `404`.
+
 ### GoalHighlights (on PlanForecastDetail, when the forecast belongs to a Goal)
 
 ```json
@@ -766,6 +845,12 @@ Absent entirely on forecasts that aren't tied to a Goal — check for the key, d
 | "What's my Goal pacing? / Will I hit my Goal?" | `GET /plans/{plan_id}/goals` → note the goal `forecast_id` → `GET /plans/{plan_id}/forecasts/{forecast_id}` → read `goal_highlights.pacing` and `goal_highlights.success_probability` |
 | "How far along is my Goal?" | Same call → `goal_highlights.details.kpi.so_far` vs `.projected`. If `so_far` is 0 the Goal hasn't started in data terms — say that rather than "0% progress" |
 | "Show me Goals on the Revenue KPI" | `GET /plans/{plan_id}/goals?kpi_id={revenue_kpi_id}` |
+| "Set a goal of $6.5M revenue on this plan" | `GET /plans/{plan_id}/versions/{version_id}` to pick a `kpi_id` from `compatible_kpis`, then `POST /plans/{plan_id}/goals` with `form: {kpi_id, name, start_date, end_date, goal_value}` — `goal_value` must be a whole number |
+| "Raise my goal target to 8M" | `PATCH /plans/{plan_id}/goals/{goal_id}` with `form: {goal_value: 8000000}` — this re-runs the forecast, so poll `processing_status` before reading pacing again |
+| "Rename this goal" | `PATCH /plans/{plan_id}/goals/{goal_id}` with `form: {name: "..."}` — a rename alone doesn't re-forecast, so `forecast_id` stays valid |
+| "Delete this goal" / "remove the goal" | `DELETE /plans/{plan_id}/goals/{goal_id}` → 204. Warn first: it deletes the Goal's forecast history too and can't be undone |
+| "Set a goal on my default plan" | Not possible — Goals only go on custom plans. Same for a plan whose period has already ended |
+| "Point this goal at a different KPI" | Not possible — `kpi_id` isn't editable. Delete the Goal and create a new one |
 | "Give me the budget by month / quarter / total" | `GET /plans/{plan_id}/versions/{version_id}/budget?granularity=monthly` — remember the leading columns become `start_date`,`end_date` for any non-daily granularity |
 | "Just the budget for July" | `.../budget?start_date=2026-07-01&end_date=2026-07-31` — trim server-side rather than downloading everything |
 | "Only give me the forecast CSV for these dates" | `.../forecasts/{forecast_id}/downloads/{key}?start_date=...&end_date=...` — works on downloads that have a date column |
@@ -1385,7 +1470,7 @@ else:
 
 4. **Treating `include_lower_funnel_effects`-style string booleans as a pattern here** — Plans endpoints use real JSON booleans (`primary: true`) and real numbers (`total_spend: 1250000.0`), unlike some Reporter/Optimizer form fields that require string-typed booleans/numbers. Don't stringify Plans values.
 
-5. **Computing a Goal's `status` from today's date** — Goal status is relative to the last date of data the model has, not to the calendar. A Goal whose window has already opened can legitimately still be `future`, and "correcting" it client-side puts you out of step with both the API and the UI. Related: don't invent a `/goals/{id}` show endpoint (it 404s) — a Goal's detail comes from `GET /plans/{plan_id}/forecasts?goal_id={goal_id}` and then showing that forecast.
+5. **Computing a Goal's `status` from today's date** — Goal status is relative to the last date of data the model has, not to the calendar. A Goal whose window has already opened can legitimately still be `future`, and "correcting" it client-side puts you out of step with both the API and the UI. Related: don't invent a `GET /goals/{id}` show endpoint (it 404s, even though `PATCH` and `DELETE` on that path are real) — a Goal's detail comes from `GET /plans/{plan_id}/forecasts?goal_id={goal_id}` and then showing that forecast.
 
 6. **Expecting a single combined counterfactual object** — There is no "planned vs. actual" comparison payload. A plan version's counterfactuals are two ordinary Forecast results — one with `altcast_type: "planned"`, one with `altcast_type: "actuals"` — in the same forecasts list as the plan's regular forecast (which has `altcast_type: null`). Fetch both and diff them yourself if you want a comparison.
 
@@ -1513,7 +1598,7 @@ else:
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/adherence/{id}/downloads/{key}` | Download an adherence CSV: `all-channels-adherence` or `{channel-name}-adherence` |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/goals` | List a plan's Goals (paginated; filters: `kpi_id`, `status`) |
 
-There is no Goal show endpoint, no `PATCH`/`PUT`, and no `DELETE` anywhere in the Plans API. Renaming and deleting a plan or version are UI-only. Editing a plan's inputs is done by creating a new version, which is also the only way the primary flag moves — it never moves backwards, in the API or the UI.
+There is no Goal show endpoint and no `PUT` anywhere in the Plans API. Goals are the one resource with `PATCH` and `DELETE`; plans and versions have neither, and renaming or deleting a plan or version is UI-only. Editing a plan's inputs is done by creating a new version, which is also the only way the primary flag moves — it never moves backwards, in the API or the UI.
 
 ### Index response
 
