@@ -3,6 +3,21 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.8.0] - 2026-10-06
+
+### Added
+
+- **Plans skill: check and fix KPI compatibility.**
+  `GET /plans/{plan_id}/compatibility/{kpi_id}` checks the plan's primary
+  version against one KPI and returns a `compatible` boolean plus a list of
+  `compatibility_errors`, each naming what makes the plan incompatible with
+  that KPI: a missing spend or non-spend channel, a missing contextual
+  variable, a lower funnel channel with no cap setting, or a custom spike
+  group the KPI's models don't have. The skill also covers fixing it: check
+  each incompatible KPI, then send all the fixes in one
+  `POST /plans/{plan_id}/versions` and re-check against the new primary
+  version.
+
 ## [1.7.0] - 2026-09-18
 
 ### Added

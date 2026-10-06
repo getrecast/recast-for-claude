@@ -1,11 +1,11 @@
 ---
 name: plans-api
-description: Use when reading, creating, or editing Recast Plans programmatically — "list my plans", "get a plan's budget", "pull a plan's forecast", "what changed between these two plan versions", "get counterfactual forecasts for this plan", "am I sticking to my plan's budget", "planned vs actual spend", "turn this optimization into a plan", "save this optimization as a plan", "build a plan from this budget", "create a plan from scratch", "change the budget on this plan", "edit my plan", "bump Meta's spend and save it", "save a new version of this plan", "what are my goals on this plan", "am I on track to hit my target", "set a goal on this plan", "create a goal", "change my goal target", "rename this goal", "delete this goal". Translates user requests related to their plans into API requests for retrieving plans, versions, budgets, forecasts/counterfactuals, spend adherence and Goals, for creating plans (from scratch, or derived from a successful optimization), and for editing a plan by creating a new plan version. Renaming a plan and deleting a plan is still UI-only.
+description: Use when reading, creating, or editing Recast Plans programmatically — "list my plans", "get a plan's budget", "pull a plan's forecast", "what changed between these two plan versions", "get counterfactual forecasts for this plan", "am I sticking to my plan's budget", "planned vs actual spend", "turn this optimization into a plan", "save this optimization as a plan", "build a plan from this budget", "create a plan from scratch", "change the budget on this plan", "edit my plan", "bump Meta's spend and save it", "save a new version of this plan", "what are my goals on this plan", "am I on track to hit my target", "set a goal on this plan", "create a goal", "change my goal target", "rename this goal", "delete this goal", "why can't this plan forecast my KPI", "this KPI is incompatible with my plan", "what is my plan missing for this KPI", "make this plan compatible with this KPI". Translates user requests related to their plans into API requests for retrieving plans, versions, budgets, forecasts/counterfactuals, spend adherence and Goals, for creating plans (from scratch, or derived from a successful optimization), and for editing a plan by creating a new plan version, including checking a plan's compatibility with a KPI and fixing an incompatible one. Renaming a plan and deleting a plan is still UI-only.
 ---
 
 # Recast Plans API — Reading, Creating, and Versioning Plans
 
-You are helping a Recast client work with their **Plans** (the Plans tab of the app) programmatically. Plans can be **read**, **created** (from scratch, or derived from a successful Optimizer run), and **edited** — where editing means adding a new version to the plan. Goals on a plan can be **created**, **edited** and **deleted** outright. What is still UI-only: renaming a plan or deleting a plan (https://docs.getrecast.com/docs/plans).
+You are helping a Recast client work with their **Plans** (the Plans tab of the app) programmatically. Plans can be **read**, **created** (from scratch, or derived from a successful Optimizer run), and **edited** — where editing means adding a new version to the plan. Goals on a plan can be **created**, **edited** and **deleted**. What is still UI-only: renaming a plan or deleting a plan (https://docs.getrecast.com/docs/plans).
 
 Most asks are still retrieval: finding the right plan, the right version, and the right data (config, budget, forecast, adherence, Goals) to pull. But when a client wants a plan built or changed, do it through the API rather than sending them to the UI — and read the **Writes: the two rules that bite** section below before you generate any create or version code, because the `budget` field means something different on each of the two write endpoints, and the `base_version_id` lock is easy to get wrong.
 
@@ -24,6 +24,7 @@ Ask the client what they're trying to get, naturally (one or two at a time):
   - **Edit an existing plan** ("change the budget", "bump Meta 10%", "push the plan out a week") → Create version (`POST /plans/{plan_id}/versions`). Ask which plan, and what they want changed. Note up front that dates are *not* editable on a version — a different date range means a new plan.
   - **Create from an optimization** ("save this as a plan", "turn this optimization into a plan") → Create with `form: {optimization_id, label}`. Just ask for the optimization (id, or a link/name you can resolve via the optimizer-api skill's list endpoint) and the label.
   - **Create from scratch** ("build a plan from this budget", "make a plan for Q3") → Create with the from-scratch form. You need the label, the date range, and a budget table. Run the channel-discovery sequence below *before* building the payload; don't guess channel names. If they don't have a budget in mind, offer the optimization route instead — it derives one for them.
+  - **Fix an incompatible KPI** ("why can't this plan forecast Revenue?", "make this plan work with my KPI") → the compatibility check, then one Create version call. See **Fixing an incompatible KPI** below. Ask which plan and which KPI(s).
   - **Read** → continue with the questions below.
 - **Which plan?** Do they know the plan's label (from the Plans tab) or its `id` (from the URL)? If not, they want to browse/filter the index.
 - **Which version?** Almost always the **primary version** (the live, current one) — this is included directly on each plan in the Index response, so a separate versions call is often unnecessary. Only fetch the versions list if they want history or a specific past version.
@@ -60,7 +61,7 @@ Write a single, self-contained script following the Code Generation Rules below.
 | **Budget metadata vs. budget data table** | The version show endpoint returns only the channel *names* used (`spend_channels`, `non_spend_channels`, `contextual_variables`, `lower_funnel_channels`). The actual daily values are a separate CSV download — it can be large, so it's not embedded in the JSON detail. |
 | **Lower funnel channel caps** | Per lower-funnel-channel setting: `uncapped` (predicted from upper funnel), `capped` (max spend for the period — needs `cap` > 0), `off` (excluded), or `manual` (you supply the spend, so the channel needs its own budget column). **Quirk:** the app UI labels the `manual` option "provided" — the API returns `manual` for it. If a client asks about "provided" spend, look for `option: "manual"`. |
 | **Spike / depvar spike groups** | Named promotional/holiday events, each tied to one or more depvars (the model components of a KPI) and dates. |
-| **compatible_kpis / incompatible_kpis** | Which KPIs this version's inputs can and can't forecast. A KPI is incompatible when the plan is missing a channel/spike/contextual variable the model needs. |
+| **compatible_kpis / incompatible_kpis** | Which KPIs this version's inputs can and can't forecast. A KPI is incompatible when the plan is missing a channel/spike/contextual variable the model needs. To find out *what* is missing for one KPI, call the compatibility endpoint. |
 | **Counterfactual / altcast_type** | A *retroactive* re-forecast of already-elapsed (in-sample) days, using the **current/latest model** rather than whatever model existed at the time — not a forward-looking prediction. Not a single comparison object either — two separate ordinary Forecast results, distinguished by `altcast_type`: `null` (the plan's regular, forward-looking forecast), `"planned"` (what the current model predicts the plan's **originally specified budget** would have produced over those historical days), or `"actuals"` (what the current model predicts the **actual spend** that occurred would have produced). No combined "planned vs. actual" payload; diffing the two is a client-side exercise. |
 | **Recommendations** | Suggested budget reallocations to improve a forecasted outcome, at Conservative / Moderate / Aggressive risk levels. Available on all Forecasts associated with a Plan (see the forecaster-api skill for the `run_recommendations` flag). |
 | **Adherence** | Planned vs. actual **spend** per channel for one plan version — the app's Adherence section. Input comparison only: no modeling, no KPI, no ROI. A new report is created each time new spend data lands, and both sides are scoped to that report's `report_through_date` (so `planned_spend` is not the plan's whole-period total). |
@@ -120,6 +121,37 @@ Because a version budget is a patch, "raise Meta 10% on 2 July" really is a two-
 **2. `base_version_id` must be the plan's *current* primary version.** That is the optimistic lock on concurrent editing. If someone saved a version between your read and your write, you get a **409** (`"base_version_id doesn't match plan's primary version id"`) and nothing is created. Don't retry blindly and don't cache the id across calls: re-read `primary_version.id`, re-apply the change on top of the new primary version, and send again. Two edits from the same base → first 201, second 409.
 
 A rejected write is always a no-op: no orphan version, and the primary flag doesn't move. So a client can safely retry after fixing the payload.
+
+## Fixing an incompatible KPI
+
+The plan's **primary version** is the one that matters here. It is the only version that can be edited, and the only one the compatibility endpoint checks. When it shows one or more KPIs as incompatible, work through this loop:
+
+```
+1. GET  /plans/{plan_id}/versions/{primary_version_id}   → incompatible_kpis, start_date, end_date
+2. GET  /plans/{plan_id}/compatibility/{kpi_id}          → once PER incompatible KPI; collect compatibility_errors
+3. POST /plans/{plan_id}/versions                        → ONE call carrying every fix from step 2
+4. GET  /plans/{plan_id}/compatibility/{kpi_id}          → compatible: true (or check compatible_kpis on the new primary version)
+```
+
+**Step 1: the KPIs to fix are the primary version's `incompatible_kpis`.** Check those, not every KPI on the client. If the client only cares about some of them, check just those.
+
+**Step 2 is one call per KPI.** The KPI is a path parameter, so there is no batch form. Merge the errors from every KPI the client wants fixed and drop duplicates, because KPIs on the same models report the same missing channel.
+
+**Step 3: map each error to a form field.** `value` on each error names the thing to add:
+
+| `type` | Put this in the version `form` |
+|---|---|
+| `budget_missing_spend_channels` | A `budget` column named `value`, with spend for every day of the plan |
+| `budget_missing_non_spend_channels` | A `budget` column named `value`, with values for every day |
+| `budget_missing_contextual_variables` | A `budget` column named `value`. The deployment's `contextual_variable_defaults[value]` is a sensible default to offer |
+| `plan_missing_lower_funnel_channel_cap` | A `lower_funnel_channel_caps` entry: `{channel_name: value, option, cap?}` |
+| `custom_spikes_in_non_existent_groups` | Either `spike_type: "model"`, or a `depvar_spike_groups` list that leaves out the spike `value`. Spike groups are **replaced wholesale**, so resend every group you want to keep |
+
+- **Ask the client for the numbers.** Don't invent spend or contextual variable values. `0` is a valid answer: a column of zeros makes the KPI compatible, because compatibility is about which columns exist, not what they hold.
+- **One call, every fix.** `budget`, `lower_funnel_channel_caps` and the spike fields can all go in the same form. The budget is a sparse patch, so send only `date` plus the new columns, and **adding** a column the base version didn't have is allowed. Use the primary version's `start_date`..`end_date` for the rows.
+- **The usual write rules apply.** Re-read `primary_version.id` right before the POST, retry through a 409, and surface `error.details` on a 422 (see **Writes: the two rules that bite**).
+
+**Step 4: verify on the new primary version.** The 201 returns the new version's id, and that version is now primary. Re-call the compatibility endpoint for each KPI you fixed, or read `GET /plans/{plan_id}/versions/{new_id}` and confirm each KPI moved into `compatible_kpis`. Check the KPIs that were already compatible too: switching `spike_type` changes which spikes apply to every KPI. If errors remain, repeat from step 2.
 
 ---
 
@@ -273,6 +305,34 @@ Rejected with 422: `label`, `start_date`, `end_date`, `optimization_id`, and any
 | 422 | Validation failed — `error.details` keyed by the field at fault, same as create |
 
 Note the split on `base_version_id`: an unusable-but-present value is a **409** (it simply isn't this plan's primary version), while an absent one — missing, `null`, or `""` — is a **400**. Don't collapse the two in error handling; a 409 means "re-read and retry", a 400 means "your request is malformed".
+
+### Compatibility — `GET /v1/clients/{client_slug}/plans/{plan_id}/compatibility/{kpi_id}`
+
+Checks the plan's **primary version** against **one** KPI and lists what must change for it to become compatible. Returned directly, no wrapper.
+
+```json
+{
+  "kpi": { "id": "uuid", "slug": "walmart_revenue", "label": "Walmart Revenue" },
+  "compatible": false,
+  "compatibility_errors": [
+    { "type": "budget_missing_spend_channels", "attribute": "kpi.budget", "value": "podcast", "message": "Channel podcast is missing" },
+    { "type": "custom_spikes_in_non_existent_groups", "attribute": "depvar_spike_groups", "value": "New Years Day", "message": "Spike group New Years Day used by the plan's custom spikes does not exist in the KPI" }
+  ]
+}
+```
+
+- **An incompatible plan is still a 200.** Branch on `compatible`, not on the status code. `compatible` is `true` exactly when `compatibility_errors` is empty.
+- **There is no version parameter.** It always checks the current primary version. To learn what an older version lacked, read that version's budget or the version show response.
+- `type` is one of `budget_missing_spend_channels`, `budget_missing_non_spend_channels`, `budget_missing_contextual_variables`, `plan_missing_lower_funnel_channel_cap`, `custom_spikes_in_non_existent_groups`. `value` is the channel, contextual variable or spike name. `attribute` is the plan field at fault: `kpi.budget` for the budget types (the Swagger example shows `budget`), `depvar_spike_groups` for spikes. For what to send about each type, see **Fixing an incompatible KPI**.
+- **Unbudgeted lower funnel channels are not errors.** An unlisted lower funnel channel defaults to uncapped. **Omitted contextual variables are not errors either**, as long as the model has a default for them.
+- Each missing item is reported once, even for a KPI built on several depvars that share the channel.
+
+| Status | Meaning |
+|---|---|
+| 200 | The check ran: compatible or not |
+| 401 | Missing or invalid token |
+| 404 | Plan or KPI not found under this client. Also returned for malformed ids, a KPI slug in place of its id, and another client's KPI |
+| 503 | Plan service unavailable |
 
 ### Index — `GET /v1/clients/{client_slug}/plans`
 
@@ -640,6 +700,23 @@ Every plan has a primary version — `primary_version` is always present, never 
 
 Note `budget_summary` here is **metadata only** (channel names) — not the daily data table.
 
+### PlanCompatibility (compatibility response)
+
+```json
+{
+  "kpi": { "id": "uuid", "slug": "string", "label": "string" },
+  "compatible": "boolean — true exactly when compatibility_errors is empty",
+  "compatibility_errors": [
+    {
+      "type": "budget_missing_spend_channels | budget_missing_non_spend_channels | budget_missing_contextual_variables | plan_missing_lower_funnel_channel_cap | custom_spikes_in_non_existent_groups",
+      "attribute": "string — the plan field at fault, e.g. kpi.budget, depvar_spike_groups",
+      "value": "string — the channel, contextual variable, or spike name",
+      "message": "string — human-readable, names the value"
+    }
+  ]
+}
+```
+
 ### PlanForecastSummary (plan forecasts-list item)
 
 ```json
@@ -829,7 +906,9 @@ Absent entirely on forecasts that aren't tied to a Goal — check for the key, d
 | "What channels are in this plan?" | `GET /plans/{plan_id}/versions/{version_id}` → `budget.spend_channels` etc. |
 | "Give me the daily budget as a spreadsheet" | `GET /plans/{plan_id}/versions/{version_id}/budget` with `Accept: text/csv` |
 | "How has this plan changed over time?" | `GET /plans/{plan_id}/versions` → compare `total_spend`/`created_at` across versions, then show individual versions for detail |
-| "Can this plan forecast Revenue?" | `GET /plans/{plan_id}/versions/{version_id}` → check if the KPI appears in `compatible_kpis` vs `incompatible_kpis` |
+| "Can this plan forecast Revenue?" | `GET /plans/{plan_id}/compatibility/{revenue_kpi_id}` → `compatible`. For every KPI at once, check `compatible_kpis` vs `incompatible_kpis` on the primary version |
+| "Why can't this plan forecast Revenue?" / "What's the plan missing?" | `GET /plans/{plan_id}/compatibility/{revenue_kpi_id}` → list each `compatibility_errors[].message` |
+| "Make this plan work with Revenue" / "fix the incompatible KPIs" | The **Fixing an incompatible KPI** loop: one compatibility call per KPI, then **one** `POST /plans/{plan_id}/versions` carrying every fix, then re-check. Ask the client for spend on any missing channel |
 | "What promotions are baked into this plan?" | `GET /plans/{plan_id}/versions/{version_id}` → `depvar_spike_groups` |
 | "Is branded search capped in this plan?" | `GET /plans/{plan_id}/versions/{version_id}` → `lower_funnel_channel_caps` |
 | "What will this plan produce? / What's my forecasted ROI?" | `GET /plans/{plan_id}/forecasts?plan_version_id={version_id}` — pull the forecast(s) for that version |
@@ -1458,6 +1537,84 @@ else:
     print(f"Projected spend {spend['projected']:,.0f} at {roi['projected']:.2f}x blended ROI")
 ```
 
+### Scenario 12: Make a plan compatible with its incompatible KPIs
+
+```python
+import pandas as pd
+
+plan_id = "8d777078-044e-4e3d-8d95-8dc14daf8d93"
+PLAN_URL = f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/plans/{plan_id}"
+
+def primary_version():
+    versions = requests.get(f"{PLAN_URL}/versions", headers=HEADERS, params={"per_page": 100}).json()["data"]
+    return requests.get(f"{PLAN_URL}/versions/{next(v for v in versions if v['primary'])['id']}",
+                        headers=HEADERS).json()
+
+def check(kpi_id):
+    resp = requests.get(f"{PLAN_URL}/compatibility/{kpi_id}", headers=HEADERS)
+    if resp.status_code != 200:      # an incompatible plan is still a 200
+        print(f"Could not check KPI {kpi_id}: {resp.status_code} {resp.text}")
+        return None
+    return resp.json()
+
+# 1. Which KPIs does the primary version fail?
+version = primary_version()
+to_fix = version["incompatible_kpis"]
+if not to_fix:
+    raise SystemExit("Every KPI is already compatible with this plan.")
+
+# 2. One compatibility call per incompatible KPI; merge and de-duplicate the errors.
+errors = {}
+for kpi in to_fix:
+    result = check(kpi["id"])
+    for e in (result["compatibility_errors"] if result else []):
+        errors[(e["type"], e["value"])] = e
+        print(f"{kpi['label']}: {e['message']}")
+
+# 3. Map errors to ONE version form. Ask the client for the values to use;
+#    the zeros here are placeholders, and still make the KPI compatible.
+missing_cols = sorted(v for (t, v) in errors if t in (
+    "budget_missing_spend_channels",
+    "budget_missing_non_spend_channels",
+    "budget_missing_contextual_variables"))
+caps = [{"channel_name": v, "option": "uncapped"}
+        for (t, v) in errors if t == "plan_missing_lower_funnel_channel_cap"]
+bad_spikes = {v for (t, v) in errors if t == "custom_spikes_in_non_existent_groups"}
+
+days = pd.date_range(version["start_date"], version["end_date"]).strftime("%Y-%m-%d")
+form = {}
+if missing_cols:
+    # Sparse patch: date + only the NEW columns. Existing columns are inherited.
+    form["budget"] = [["date", *missing_cols]] + [[d, *["0"] * len(missing_cols)] for d in days]
+if caps:
+    form["lower_funnel_channel_caps"] = caps
+if bad_spikes:
+    # Spike groups replace wholesale: resend the ones to keep, minus the bad ones.
+    keep = [g for g in version["depvar_spike_groups"] if g["spike_name"] not in bad_spikes]
+    form.update({"spike_type": "custom", "depvar_spike_groups": keep} if keep else {"spike_type": "model"})
+
+# Re-read the base immediately before writing. On a 409, re-read and rebuild the form.
+resp = requests.post(f"{PLAN_URL}/versions", headers=HEADERS,
+                     json={"base_version_id": primary_version()["id"], "form": form})
+assert resp.status_code == 201, f"{resp.status_code}: {resp.text}"   # 422 → print error.details
+new_id = resp.json()["id"]
+
+# 4. Verify against the NEW primary version.
+for kpi in to_fix:
+    result = check(kpi["id"])
+    if result is None:
+        status = "could not be checked"
+    elif result["compatible"]:
+        status = "compatible"
+    else:
+        status = "still missing " + ", ".join(e["value"] for e in result["compatibility_errors"])
+    print(f"{kpi['label']}: {status}")
+after = requests.get(f"{PLAN_URL}/versions/{new_id}", headers=HEADERS).json()
+print("Compatible KPIs now:", [k["label"] for k in after["compatible_kpis"]])
+```
+
+If you drop a spike group (`spike_type: "model"` or a shorter group list), re-check the KPIs that were already compatible as well. The spike change applies to every KPI on the plan.
+
 ---
 
 ## Common Mistakes to Avoid
@@ -1506,11 +1663,13 @@ else:
 
 22. **Computing the plan's latest allowed end date from the newest model** — It's derived from the **earliest-ending** KPI-linked model plus 730 days. A client with one stale KPI-linked model can have a limit in the past, meaning no future-dated plan is possible at all. Compute `min(end_date) + 730 days` across KPI-linked deployments, not `max`.
 
-23. **Trusting a 201 to mean the plan is forecastable** — `compatible_kpis` is only populated when the budget covers all of a model's channels (spend *and* non-spend), so a thin budget creates a plan no KPI can forecast, with no warning in the response. Always read the version back and check what actually landed.
+23. **Trusting a 201 to mean the plan is forecastable** — `compatible_kpis` is only populated when the budget covers all of a model's channels (spend *and* non-spend), so a thin budget creates a plan no KPI can forecast, with no warning in the response. Always read the version back and check what actually landed. To learn *what* is missing for a KPI, call `GET /plans/{plan_id}/compatibility/{kpi_id}`.
 
 24. **Reading a blank budget cell as "no value"** — It's coerced to `0` on both endpoints, not rejected. A cell the caller forgot to fill is indistinguishable from a deliberate zero, and nothing downstream flags it. Validate the table before sending.
 
 25. **Assuming a version budget has to cover the full range, or be in date order** — Neither is true; both are create-only rules. A version patch may name one day and one channel, in any order. What it may *not* do is name a date outside the base version's range — including a table that mixes one in-range row with one out-of-range row, which is rejected wholesale rather than partially applied.
+
+26. **Fixing incompatible KPIs one version at a time, or expecting to check an older version** — The compatibility endpoint takes one KPI per call, but the fix does not need one version per KPI. Collect the errors for every incompatible KPI first, then send them all in a single `POST /plans/{plan_id}/versions`. Each extra version is permanent history, and each one moves the `base_version_id` you need for the next write. The endpoint takes a plan id, not a version id, so it always checks the plan's primary version. That is also the only version a fix can be built on.
 
 ---
 
@@ -1597,6 +1756,7 @@ else:
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/adherence/{id}` | Show one adherence report (`id` = the report's id): planned vs. actual spend highlights + downloads |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/adherence/{id}/downloads/{key}` | Download an adherence CSV: `all-channels-adherence` or `{channel-name}-adherence` |
 | GET | `/v1/clients/{client_slug}/plans/{plan_id}/goals` | List a plan's Goals (paginated; filters: `kpi_id`, `status`) |
+| GET | `/v1/clients/{client_slug}/plans/{plan_id}/compatibility/{kpi_id}` | Check the primary version against one KPI: `{kpi, compatible, compatibility_errors[]}`. Always 200 for a real plan/KPI pair, compatible or not |
 
 There is no Goal show endpoint and no `PUT` anywhere in the Plans API. Goals are the one resource with `PATCH` and `DELETE`; plans and versions have neither, and renaming or deleting a plan or version is UI-only. Editing a plan's inputs is done by creating a new version, which is also the only way the primary flag moves — it never moves backwards, in the API or the UI.
 
@@ -1655,7 +1815,8 @@ Filter examples: `?granularity=monthly`, `?granularity=total`, `?start_date=2026
 | "channels in this plan" | `budget.spend_channels` / `non_spend_channels` / `contextual_variables` / `lower_funnel_channels` on version show |
 | "branded search cap", "lower funnel setting" | `lower_funnel_channel_caps` |
 | "promotions", "holidays baked into the plan" | `depvar_spike_groups` |
-| "can this plan forecast X KPI?" | `compatible_kpis` / `incompatible_kpis` on version show |
+| "can this plan forecast X KPI?" | `compatible_kpis` / `incompatible_kpis` on version show, or `compatible` from `GET /plans/{plan_id}/compatibility/{kpi_id}` |
+| "why is this KPI incompatible?", "what is the plan missing?" | `compatibility_errors` from `GET /plans/{plan_id}/compatibility/{kpi_id}` |
 | "plan type", "default vs custom" | `plan_type` |
 | "is this plan active?" | `status` (`current`/`future`/`expired`) |
 | "plan forecast", "counterfactual", "altcast" | `GET /plans/{plan_id}/forecasts` (filter with `plan_version_id` for one version) — counterfactuals are the entries with a non-null `altcast_type` |
