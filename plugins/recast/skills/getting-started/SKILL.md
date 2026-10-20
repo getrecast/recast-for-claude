@@ -10,7 +10,7 @@ one is the most common source of confusion:
 
 | What you're using | How it authenticates | Needs a PAT? |
 |---|---|---|
-| **MCP server** — the `recast` tools (`list_clients`, `run_report_tool`, `get_report`, …) | **OAuth** browser sign-in with your Recast account | **No** |
+| **MCP server** — the `recast` tools (`list_clients`, `run_tool`, `get_report`, …) | **OAuth** browser sign-in with your Recast account | **No** |
 | **API skills** — code the `reporter-api` / `forecaster-api` / `optimizer-api` / `plans-api` skills generate to call the Recast API directly | a **`RECAST_PAT`** in the environment | **Yes** |
 
 Most users only need the MCP server, and it needs **no token to configure** —

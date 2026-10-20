@@ -1,6 +1,6 @@
 ---
 name: reporter-api
-description: Use when pulling data or reports from the Recast Reporter API — "get channel ROI as CSV", "download attribution data", "export model results", "create a report via the API". Identifies the right report_type from what the user wants to analyze, prompts for required inputs, generates code to create/poll/download CSV results.
+description: Use when pulling data or reports from the Recast Reporter API — "get channel ROI as CSV", "download attribution data", "export model results", "create a report via the API", "get the data behind this chart", "pull the saturation curve data", "download the ROI waterfall", "why is this channel's estimate uncertain", "get the daily marketing vs baseline series", "rebuild a Recast chart in my dashboard". Identifies the right report_type from what the user wants to analyze, prompts for required inputs, generates code to create/poll/download CSV results.
 ---
 
 # Recast Reporter API — Matching Goals to Reports
@@ -11,6 +11,8 @@ You are helping a Recast client use the Reporter API programmatically. Your job 
 2. Identify the correct `report_type`
 3. Gather the required form inputs for that report
 4. Generate code to create the report, poll until complete, and download the CSVs
+
+**What the downloads contain**: each report's downloads include the data behind every chart on that report in the app, not only its summary tables. If a client asks for "the numbers behind a chart", find the report that draws that chart and use its downloads. The one exception is the share of spend and effect chart on the Insights Overview report, which has no download.
 
 **Critical quirk**: `report_type` lives **inside** the `form` object, NOT at the top level of the request body. The Swagger spec says top-level — ignore that. Always put `report_type` inside `form`.
 
@@ -37,7 +39,7 @@ You'll always need:
 Before writing code, confirm:
 - Which report type and what it will show
 - The form inputs you'll use
-- Which CSV downloads will be available when it completes (use the Download Keys Reference)
+- Which CSV downloads will be available when it completes (see the **Downloads** line for that report in Report Descriptions), and which of them the client actually needs.
 
 Then write a self-contained script following the Code Generation Rules.
 
@@ -54,36 +56,39 @@ Use this to match the user's description to the correct `report_type`.
 | "Channel contribution", "how much did each channel drive?", "attribution breakdown", "which channels are working?" | `compute_insights_overview` | `start_date`, `end_date` | Yes |
 | "Baseline", "organic sales", "intercept", "non-marketing contribution", "what would sales be without marketing?" | `compute_baseline_summary` | `start_date`, `end_date`, `include_spikes` | Yes |
 | "Time delay between spend and outcome", "adstock", "carryover", "shift curves", "how long before spend converts?" | `compare_shift_curves` | `channels` | Yes |
-| "Spend response curves", "saturation curves", "what happens at different spend levels?", "diminishing returns" | `compute_spend_response_curves` | `date`, `num_days`, `channels` | Yes |
+| "Spend response curves", "saturation curves", "what happens at different spend levels?", "diminishing returns", "marginal ROI/CPA curve", "where does the next dollar work hardest?" | `compute_spend_response_curves` | `date`, `num_days`, `channels` | Yes |
 | "Compare two time periods", "before vs after", "period comparison", "how did performance change?" | `compare_time_periods` | `previous_start_date`, `previous_end_date`, `period_start_date`, `period_end_date` | No |
 | "Channel performance with grouping", "grouped ROI", "custom channel groups" | `compute_grouped_channel_summaries` | `start_date`, `end_date`, `channel_groups`, `include_lower_funnel_effects` | Yes |
 | "Fixed spend performance", "performance at a specific spend level", "what's the ROI at $X?" | `compute_fixed_spend_performance` | `start_date`, `end_date`, `channels`, `include_lower_funnel_effects`, `spend` | No |
 | "How much was spent in each channel?", "spend summary", "reconcile spend vs internal data" | `compute_spend_summary` | `start_date`, `end_date` | Yes |
+| "Subchannel spend", "spend mix within a channel", "how is spend split across a channel's subchannels?" | `compute_subchannel_spend_over_time` | *(none)* | No |
 | "Spike effects", "promotion impact", "holiday lift", "pull-forward and pull-back" | `compute_spike_detail_summary` | *(none)* | Yes |
 | "Period summary", "in-period effects", "future returns from past spend", "comprehensive period breakdown" | `compute_period_summary` | `start_date`, `end_date` | No |
 | "Lower funnel details", "what drives branded search spend?", "upper-to-lower funnel waterfall" | `compute_lower_funnel_waterfall` | `start_date`, `end_date` | Yes |
 | "Upper funnel details", "how much of my ROI comes from lower funnel?", "indirect ROI" | `compute_upper_funnel_details` | `start_date`, `end_date`, `channels` | No |
 | "Context variables", "price effects", "brand awareness impact", "external factors on marketing effectiveness" | `compute_context_variable_summary` | `start_date`, `end_date` | Yes |
-| "In-sample model fit", "how well does the model fit the data?", "model diagnostics" | `compute_in_sample_model_fit` | `start_date`, `end_date` | No |
-| "Marketing vs baseline", "organic share vs marketing share", "how much does marketing move my KPI?" | `compute_marketing_vs_baseline` | `start_date`, `end_date` | No |
-| "Channel uncertainty", "why is the confidence interval wide?", "uncertainty drivers", "lack of signal" | `compute_prior_vs_posterior` | `start_date`, `end_date`, `channels` | Yes |
-| "Daily spend vs KPI", "channel correlations", "spend patterns", "are my channels correlated?" | `compute_daily_spend_vs_KPI` | `start_date`, `end_date`, `channels` | No |
+| "In-sample model fit", "how well does the model fit the data?", "model diagnostics", "predicted vs actual over time" | `compute_in_sample_model_fit` | `start_date`, `end_date` | No |
+| "Marketing vs baseline", "organic share vs marketing share", "how much does marketing move my KPI?", "daily baseline vs marketing series" | `compute_marketing_vs_baseline` | `start_date`, `end_date` | No |
+| "Priors vs posteriors", "did the priors change?", "time shift priors", "baseline prior range" | `compute_prior_vs_posterior` | `start_date`, `end_date`, `channels` | Yes |
+| "Daily spend vs KPI", "channel correlations", "spend patterns", "are my channels correlated?" | `compute_daily_spend_vs_kpi` | `start_date`, `end_date`, `channels` | No |
 | "Share of spend vs share of effect", "over/underperforming channels over time", "efficiency trend" | `compute_share_of_spend_vs_effect` | `start_date`, `end_date`, `granularity` | No |
 | "ROI waterfall", "what's driving my ROI?", "decompose ROI", "why did my ROI change?" | `compute_roi_cpa_waterfall_plots` | `start_date`, `end_date`, `channels` | No |
 | "Backtest", "out-of-sample model performance", "holdout evaluation" | `compute_backtest_summaries` | *(none)* | Yes |
 | "Model configuration", "priors", "model settings", "export model parameters" | `compute_model_configuration` | *(none)* | Yes |
 | "Experiments", "experiment results", "test results" | `compute_experiments_summaries` | *(none)* | Yes |
 | "Clean data", "raw data export", "export input data" | `compute_clean_data` | *(none)* | Yes |
-| "Channel Uncertainty" | `compute_channel_uncertainty_drivers` | `start_date`, `end_date` | No |
+| "Channel uncertainty", "why is the confidence interval wide?", "uncertainty drivers", "lack of signal", "which channels can't the model separate?" | `compute_channel_uncertainty_drivers` | `start_date`, `end_date` | No |
 
 ---
 
 ## Report Descriptions
 
+Each description ends with the report's download keys. Parts in `{braces}` vary with the inputs, such as the channels or groups in the report.
+
 ### compute_insights_overview
 Shows how much of the KPI each channel drove in the date range — broken down by total vs. direct impact, shifted vs. unshifted, with ROI and MROI. The primary channel attribution report. Start here for any "what's working?" question.
 
-**Downloads**: impact (shifted/unshifted × total/direct), ROI, MROI — 8 CSVs total.
+**Downloads**: impact (shifted/unshifted × total/direct), ROI, MROI, plus `direct_contribution_by_channel` (each channel's direct contribution to the KPI, including Baseline and Total rows). CPA models with non-spend channels also get `_nonspend` versions of the summaries. The summary keys say `roi`/`mroi` even on CPA models.
 
 ### compute_baseline_summary
 Shows the non-marketing (organic/baseline) contribution to KPI over time. Answers: "what would sales look like without any marketing?" Can include or exclude spike/promotional effects. Can be run into the future to see forecasted baseline.
@@ -93,17 +98,17 @@ Shows the non-marketing (organic/baseline) contribution to KPI over time. Answer
 ### compare_shift_curves
 Shows the time-delay (adstock/carryover) between when a channel spends and when that spend's effect is realized. Day 0 is the spend date. Essential for understanding long-tail effects of TV or branded campaigns.
 
-**Downloads**: `all_shift_curves_summarized` (one row per channel × day offset).
+**Downloads**: `all_shift_curves_summarized` (one row per channel × day offset × curve). The `curve` column is `cumulative` or `noncumulative`.
 
 ### compute_spend_response_curves (Multi-Day Spend Response)
 Shows impact, ROI/CPA, and MROI/MCPA at different spend levels for selected channels, evaluated at a specific date over a lookback window of `num_days` days. Points are anchored to actual historical spend in that window. Useful for saturation and scaling analysis.
 
-**Downloads**: `multi_day-multi_channel-tables-full_table`.
+**Downloads**: `multi_day-multi_channel-tables-full_table`, single-channel tables per channel, and six full curves: `direct_impact_curves`, `total_impact_curves`, `direct_roi_curves`, `total_roi_curves`, `direct_mroi_curves`, `total_mroi_curves`. On CPA models the curve keys use `cpa`/`mcpa` instead of `roi`/`mroi`. Each curve file has a `spend` column plus `{channel}_mean`, `{channel}_median`, `{channel}_p25` and `{channel}_p75` for each selected channel.
 
 ### compare_time_periods
 Compares ROI/CPA, mROI/mCPA, baseline, in-period effect, and total outcome across two distinct time periods. Also provides channel-level comparison with % change and confidence intervals. The previous period must end strictly before the current period starts.
 
-**Downloads**: `summary-overall` (aggregate), `summary-time_table` (channel-level).
+**Downloads**: `summary-overall` (aggregate), `summary-time_table` (the two periods' date ranges and lengths), `spend_comparison`, `{metric}_comparison_spend_channels` and `m{metric}_comparison_spend_channels` (where `{metric}` is `roi` or `cpa`), and `in_period_effect_comparison`. CPA models with non-spend channels also get `_non_spend_channels` versions. `pct_change` is a rounded text value such as `-36%`.
 
 ### compute_grouped_channel_summaries
 Channel performance report with user-defined groupings (e.g., "Paid Social", "TV & Audio"). Reports impact, ROI, and MROI for each group across daily/weekly/monthly/total granularities.
@@ -113,12 +118,17 @@ Channel performance report with user-defined groupings (e.g., "Paid Social", "TV
 ### compute_fixed_spend_performance
 Estimates channel performance at a fixed spend level — historically or up to 730 days into the future. Run with a small spend (e.g., $1) to see baseline efficacy before saturation.
 
-**Downloads**: check `results.downloads` after completion — vary by deployment.
+**Downloads**: `multi_channel_impact`, `multi_channel_roi` and `multi_channel_mroi` (all channels in one file: `name`, `date`, `value`, the daily mean), plus `channel_summary_impact-{channel}`, `channel_summary_roi-{channel}` and `channel_summary_mroi-{channel}` for each channel (`date`, `mean`, `2.5%`, `25%`, `50%`, `75%`, `97.5%`). On CPA models the keys use `cpa`/`mcpa` instead of `roi`/`mroi`.
 
 ### compute_spend_summary
 Summarizes how much was spent per channel over a time period. Useful for reconciling Recast data against internal spend systems. Provides daily, weekly, monthly, and total views.
 
 **Downloads**: `tables-daily`, `tables-weekly`, `tables-monthly`, `tables-total`.
+
+### compute_subchannel_spend_over_time
+Shows how each channel's spend splits across its subchannels, week by week, over the trailing 90 days to the model's end date. Only runs on models with subchannels; other models return 422 "is not a supported report_type". To check whether a model has subchannels, look for the `tables-subchannels` download in `compute_model_configuration`.
+
+**Downloads**: `spend_over_time-{parent_channel}` (one per channel with subchannels and spend in the window: `start_date`, `subchannel`, `spend`, `pct_of_mix`). `start_date` is the start of each week, and the first week can be partial. `pct_of_mix` is a string such as `27.1%`, so strip the `%` before doing math with it.
 
 ### compute_spike_detail_summary
 Shows how promotions, holidays, and spikes affected the KPI day-by-day, including pull-forward and pull-back effects. Provides both individual spike views (each event separately) and grouped views (all instances of a recurring event like "Black Friday" combined).
@@ -138,52 +148,52 @@ Shows which upper funnel channels drove spend into each lower funnel channel, wi
 ### compute_upper_funnel_details
 Shows how each upper funnel channel contributes to ROI through lower funnel channels — Direct ROI vs. Total ROI over time. The gap is the indirect ROI from lower funnel activity.
 
-**Downloads**: `channel_summaries-{channel}-summary_table` (one per selected channel).
+**Downloads**: `channel_summaries-{channel}-summary_table` and `roi_over_time-{channel}` (one each per selected channel). `roi_over_time-{channel}` is a daily series of direct and total ROI or CPA with spend; the key says `roi` even on CPA models. Days with zero spend have NA ROI/CPA.
 
 ### compute_context_variable_summary
-Shows the effect of contextual variables (price, brand awareness, etc.) on marketing effectiveness over time. Only available for deployments that have contextual variables configured. Shows effect size, variable over time, and effect over time.
+Shows the effect of contextual variables (price, brand awareness, etc.) on marketing effectiveness over time. Only available for deployments that have contextual variables configured.
 
-**Downloads**: check `results.downloads` after completion.
+**Downloads**: `effect_over_time-{variable}` (one per contextual variable): a daily series with the variable's value and its effect on baseline and marketing (mean, median and quartiles).
 
 ### compute_in_sample_model_fit
 Model diagnostic: shows predicted vs. actual KPI in-sample, with fit statistics. Use this to assess how well the model fits the training data (in contrast to the backtest which evaluates out-of-sample prediction).
 
-**Downloads**: `stats`.
+**Downloads**: `stats` and `predicted_vs_actual` (daily `actual_outcome`, `mean_model_fit`, `median`, `p05` and `p95`).
 
 ### compute_marketing_vs_baseline
 Shows the split between marketing-driven KPI and organic/baseline KPI over time. Answers: "how much does my marketing actually move the needle vs. organic trends?"
 
-**Downloads**: `contribution`.
+**Downloads**: `contribution` and `baseline_vs_marketing` (a daily series of baseline and marketing contribution with mean, median and quartiles, next to the actual KPI).
 
-### compute_prior_vs_posterior (Channel Uncertainty Drivers)
-Diagnostic tool that decomposes why a channel's confidence interval is wide. Separates uncertainty due to low spend signal vs. correlation with other channels or the baseline.
+### compute_prior_vs_posterior
+Compares the model's priors with its posterior estimates: time shifts for the selected channels, and the daily baseline posterior against its prior range.
 
-**Downloads**: check `results.downloads` after completion.
+**Downloads**: `time_shift_prior_vs_posterior` (one row per selected channel, with `prior_lb` and `prior_ub`) and `baseline_prior_vs_posterior` (daily, with `prior_baseline_min` and `prior_baseline_max`).
 
-### compute_daily_spend_vs_KPI
+### compute_daily_spend_vs_kpi
 Shows daily spend per channel vs. the modeled KPI. Also produces correlation coefficients between channels — useful for identifying pairs of channels that may be confounded in the model.
 
-**Downloads**: `correlations`.
+**Downloads**: `correlations`, `spend_vs_kpi` and `spend_vs_kpi_scaled`. The two spend files have one row per day, a column named after the KPI's display name (for example `Amazon Revenue`), and one column per selected channel.
 
 ### compute_share_of_spend_vs_effect
 Shows each channel's (share of effect − share of spend) over time at a chosen granularity. Positive = overperforming (more effect than spend share), negative = underperforming. Trends over time reveal whether channel efficiency is improving or declining.
 
-**Downloads**: check `results.downloads` after completion.
+**Downloads**: `share_of_spend_vs_effect-{channel}` (one per spend channel), with `delta` (the mean), `delta_p25`, `delta_p50`, `delta_p75` and a `performance` label (`under`, `neutral` or `over`) per period.
 
 ### compute_roi_cpa_waterfall_plots
-Decomposes ROI/CPA into its drivers: baseline ROI, context variables, saturation effects, changing saturation, and seasonal/weekly effects. Answers: "why does Recast estimate this ROI?"
+Decomposes ROI/CPA into its drivers: baseline ROI, context variables, saturation effects, changing saturation, and weekly effects. Answers: "why does Recast estimate this ROI?"
 
-**Downloads**: check `results.downloads` after completion.
+**Downloads**: one file for all selected channels: `roi_waterfall` on ROI models, `cpa_waterfall` on CPA models. The `Name` column holds the step (Baseline, Context, Channel Saturation, Changing Saturation, Weekly Effects). Baseline is the starting value and the other steps are added to it, so the steps for a channel sum to that channel's direct ROI or CPA.
 
 ### compute_backtest_summaries
 Out-of-sample backtest results showing how well the model predicts data it wasn't trained on. Model diagnostic.
 
-**Downloads**: none in current version.
+**Downloads**: `recast-{N}days-reconciliation` tables, `daily_predicted_vs_actual-{N}_days` and `cumulative_predicted_vs_actual-{N}_days` for each backtest window, plus `holdout_daily_predicted_vs_actual` and `holdout_cumulative_predicted_vs_actual`. The number in the predicted-vs-actual keys is nominal; the download's `description` gives the real window length (for example `-30_days` with the description "(35 Days)").
 
 ### compute_model_configuration
 Exports model configuration tables: priors, ROI settings, shift parameters, spike definitions, and channel linkings.
 
-**Downloads**: `tables-baseline`, `tables-roi`, `tables-shifts`, `tables-spikes`, `tables-channel_linkings`.
+**Downloads**: `tables-baseline`, `tables-roi`, `tables-shifts`, `tables-lift_tests`, `tables-spikes`, `tables-channel_linkings`, and `tables-subchannels` on models with subchannels.
 
 ### compute_experiments_summaries
 Experiment results summary. Only available when experiments are configured on the deployment.
@@ -196,16 +206,16 @@ Exports the clean input data used by the model.
 **Downloads**: `clean_data`.
 
 ### compute_channel_uncertainty_drivers
-Channel uncertainty diagnostic report.
+Diagnoses why a channel's estimate is uncertain. Each channel gets a lack-of-signal score from 0 to 1 (how much of its uncertainty comes from too little variation in its own spend), and a breakdown of how much of its uncertainty comes from overlap with other channels, the baseline, spikes, or lack of signal.
 
-**Downloads**: check `results.downloads` after completion.
+**Downloads**: `lack_of_signal` (one row per channel: `channel`, `lack_of_signal`, `spend`) and `uncertainty_breakdown-{channel}` (one per channel with spend: `factor`, `share_of_uncertainty`). Channels with zero spend in the period have NA `lack_of_signal` and no breakdown.
 
 ---
 
 ## Form Fields by Report Type
 
 ### Group 1 — deployment_id only
-`compute_backtest_summaries`, `compute_experiments_summaries`, `compute_clean_data`, `compute_model_configuration`, `compute_spike_detail_summary`
+`compute_backtest_summaries`, `compute_experiments_summaries`, `compute_clean_data`, `compute_model_configuration`, `compute_spike_detail_summary`, `compute_subchannel_spend_over_time` (models with subchannels only)
 
 ```json
 {
@@ -227,7 +237,7 @@ Channel uncertainty diagnostic report.
 ```
 
 ### Group 3 — Date Range + Channels
-`compute_roi_cpa_waterfall_plots`, `compute_upper_funnel_details`, `compute_prior_vs_posterior`, `compute_daily_spend_vs_KPI`
+`compute_roi_cpa_waterfall_plots`, `compute_upper_funnel_details`, `compute_prior_vs_posterior`, `compute_daily_spend_vs_kpi`
 
 ```json
 {
@@ -483,7 +493,11 @@ assert result["status"] == "success", f"Report ended with status: {result['statu
 ```python
 import io, pandas as pd
 
-for dl in result["results"]["downloads"]:
+# Keep only the files the client needs. Example: the lack-of-signal table plus one channel's breakdown.
+wanted_keys = {"lack_of_signal", "uncertainty_breakdown-linear_tv"}
+wanted = [dl for dl in result["results"]["downloads"] if dl["key"] in wanted_keys]
+
+for dl in wanted:
     csv_resp = requests.get(
         f"{BASE_URL}/v1/clients/{CLIENT_SLUG}/reports/{report_id}/downloads/{dl['key']}",
         headers={**HEADERS, "Accept": "text/csv"},
@@ -670,7 +684,8 @@ resp = requests.post(
     },
 )
 assert resp.status_code == 201, f"Failed: {resp.text}"
-# Download key: multi_day-multi_channel-tables-full_table
+# Download keys: multi_day-multi_channel-tables-full_table, plus full curves such as
+# direct_mroi_curves / total_mroi_curves (direct_mcpa_curves / total_mcpa_curves on CPA models)
 ```
 
 ---
@@ -705,7 +720,17 @@ assert resp.status_code == 201, f"Failed: {resp.text}"
 
 14. **Invalid date format** — All dates must be `YYYY-MM-DD`. Other formats (e.g., `MM-DD-YYYY`) return 422.
 
-15. **Assuming every `report_type` has a pre-rendered version** — only the types marked "Yes" in the Report Type Reference table's "Pre-rendered?" column do. Check the `prerendered`-filtered list rather than assuming one exists for an arbitrary report_type.
+15. **Hard-coding download keys that depend on the model type:** The waterfall is `roi_waterfall` on ROI models and `cpa_waterfall` on CPA models, and the spend response curve keys switch between `roi`/`mroi` and `cpa`/`mcpa`. Read keys from `results.downloads`.
+
+16. **Downloading every file from a report:** Some reports return one file per channel (for example `uncertainty_breakdown-{channel}`, `share_of_spend_vs_effect-{channel}`). Pick the keys you need first.
+
+17. **Reading the backtest key as the window length:** In `daily_predicted_vs_actual-30_days`, the `30` is nominal. The download's `description` gives the real length.
+
+18. **Expecting weekly or monthly rows:** Daily series (for example `baseline_vs_marketing`, `predicted_vs_actual`, `spend_vs_kpi`, `roi_over_time-{channel}`) return one row per day for the report's date range. Aggregate them yourself if the client wants weekly or monthly views.
+
+19. **Assuming consistent column names across files:** Quantile columns vary between files (`p25`, `25%`, `delta_p50`), and some columns are named after the KPI, so they contain spaces (for example `Amazon Revenue mean`). Read the header of each file before referencing columns, and parse CSVs with names left as-is (`check.names = FALSE` in R).
+
+20. **Assuming every `report_type` has a pre-rendered version** — only the types marked "Yes" in the Report Type Reference table's "Pre-rendered?" column do. Check the `prerendered`-filtered list rather than assuming one exists for an arbitrary report_type.
 
 ---
 
@@ -721,6 +746,7 @@ assert resp.status_code == 201, f"Failed: {resp.text}"
 - Include error handling that shows the response body on non-200/201 responses.
 - Poll for completion with a 30-second interval; add a timeout (for example, 15 minutes) to avoid infinite loops.
 - Check for both `"ready"` and `"processing"` statuses when polling.
+- Download only the keys the client needs. Some reports return many downloads, for example one file per channel.
 
 **Python specific:**
 - Use `requests` and `pandas`
@@ -804,33 +830,6 @@ Table download keys return `text/csv`. Access with a plain GET — setting `Acce
 
 ---
 
-## Download Keys Reference
-
-| `report_type` | Download keys |
-|---|---|
-| `compute_insights_overview` | `summaries-total-impact_shifted`, `summaries-direct-impact_shifted`, `summaries-total-impact_unshifted`, `summaries-direct-impact_unshifted`, `summaries-total-roi`, `summaries-direct-roi`, `summaries-total-mroi`, `summaries-direct-mroi` |
-| `compute_baseline_summary` | `summary_total`, `summary_monthly`, `summary_daily` |
-| `compare_shift_curves` | `all_shift_curves_summarized` |
-| `compute_spend_response_curves` | `multi_day-multi_channel-tables-full_table` |
-| `compare_time_periods` | `summary-overall`, `summary-time_table` |
-| `compute_grouped_channel_summaries` | `group_summaries-{group_name}-{metric}-{granularity}` — e.g. `group_summaries-Paid Social-roi-summary_monthly` |
-| `compute_spend_summary` | `tables-daily`, `tables-weekly`, `tables-monthly`, `tables-total` |
-| `compute_spike_detail_summary` | `individual_daily_effects`, `individual_cumulative_effects`, `individual_cumulative_effects_summarized`, `grouped_daily_effects`, `grouped_cumulative_effects`, `grouped_cumulative_effects_summarized` |
-| `compute_period_summary` | `summary_tables-merged_means_summary`, `summary_tables-total_effect`, `summary_tables-in_period_effect`, `summary_tables-after_period_effect`, `summary_tables-future_effect`, `summary_tables-observed_roi`, `summary_tables-true_roi`, `summary_tables-pre_period_effect` |
-| `compute_lower_funnel_waterfall` | `channel_summaries-{lower_funnel_channel}-summary_table` (one per lower funnel channel), `daily_effect-table` |
-| `compute_upper_funnel_details` | `channel_summaries-{channel}-summary_table` (one per selected channel) |
-| `compute_in_sample_model_fit` | `stats` |
-| `compute_marketing_vs_baseline` | `contribution` |
-| `compute_daily_spend_vs_KPI` | `correlations` |
-| `compute_clean_data` | `clean_data` |
-| `compute_model_configuration` | `tables-baseline`, `tables-roi`, `tables-shifts`, `tables-spikes`, `tables-channel_linkings` |
-| `compute_backtest_summaries` | *(none in current version)* |
-| `compute_experiments_summaries` | *(none in current version)* |
-
-For report types not listed, check `result["results"]["downloads"]` after completion — download keys are dynamic (e.g. they may vary based on which channels or groups were included).
-
----
-
 ## Glossary
 
 | Client says | `report_type` |
@@ -850,14 +849,15 @@ For report types not listed, check `result["results"]["downloads"]` after comple
 | "contextual factors / price / brand awareness" | `compute_context_variable_summary` |
 | "model fit / in-sample accuracy" | `compute_in_sample_model_fit` |
 | "marketing share vs organic share" | `compute_marketing_vs_baseline` |
-| "CI width / uncertainty / why is interval wide?" | `compute_prior_vs_posterior` |
-| "correlations between channels" | `compute_daily_spend_vs_KPI` |
+| "CI width / uncertainty / why is interval wide? / lack of signal" | `compute_channel_uncertainty_drivers` |
+| "correlations between channels / daily spend next to KPI" | `compute_daily_spend_vs_kpi` |
 | "over/underperforming channels over time" | `compute_share_of_spend_vs_effect` |
-| "why is my ROI this value? / ROI drivers" | `compute_roi_cpa_waterfall_plots` |
+| "why is my ROI this value? / ROI drivers / breakdown of ROI or CPA" | `compute_roi_cpa_waterfall_plots` |
 | "backtest / out-of-sample" | `compute_backtest_summaries` |
 | "model config / priors / parameters" | `compute_model_configuration` |
 | "raw data / data export" | `compute_clean_data` |
-| "uncertainty / breakdown of roi/ breakdown of cpa" | `compute_channel_uncertainty_drivers` |
+| "subchannel spend / spend mix within a channel" | `compute_subchannel_spend_over_time` |
+| "priors vs posteriors / did the priors change?" | `compute_prior_vs_posterior` |
 
 ## Resources
 

@@ -3,6 +3,36 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.9.0] - 2026-10-20
+
+### Added
+
+- **Reporter skill: get the data behind report plots.** Report downloads
+  include the data behind every plot on a report, not only the summary tables. 
+  The skill now lists the download keys for each report type,
+  so you can ask for things like saturation curves, the ROI waterfall or the
+  daily marketing vs. baseline series and get the data in CSV format.
+
+- **Reporter skill: subchannel spend.** `compute_subchannel_spend_over_time`
+  shows how each channel's spend splits across its subchannels, week by week,
+  over the last 90 days of the model. It only runs on models that have
+  subchannels.
+
+### Fixed
+
+- **Reporter skill: uncertainty questions go to the right report.** Asking
+  why a channel's confidence interval is wide now uses
+  `compute_channel_uncertainty_drivers`. `compute_prior_vs_posterior` is
+  described as what it is: a comparison of the model's priors with its
+  estimates.
+
+- **Reporter skill: daily spend report name.** The skill now uses
+  `compute_daily_spend_vs_kpi` (lowercase `kpi`), the report type name the
+  API accepts.
+
+- **Getting started skill:** the MCP tool for running reports is listed under
+  its current name, `run_tool`.
+
 ## [1.8.0] - 2026-10-06
 
 ### Added
