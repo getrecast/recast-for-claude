@@ -3,6 +3,36 @@
 All notable changes to the Recast marketplace and plugin for Claude Code are
 documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.10.0] - 2026-11-19
+
+### Added
+
+- **Reporter skill: long-term effects of brand channels.** Seven report types
+  take an optional `include_long_term_effects` field (`"true"` or `"false"`)
+  that moves brand channels' long-term effects out of the baseline and onto
+  the channels. It's on by default, so the skill explains when to send
+  `"false"`, for example when comparing against older results. It also covers
+  how to find a model's brand channels (`compute_model_configuration`'s
+  `highlights.long_term_channels`), how to check what a report applied
+  (`highlights.has_long_term_effects`), and the insights overview's
+  `_long_term` downloads and highlights.
+
+- **Reporter skill: `use_latest_deployments`.** The create request's
+  `use_latest_deployments` field defaults to `true`, which runs the report
+  against the dashboard's active deployment instead of the `deployment_id` in
+  the form. The skill now sends `false` when the client wants a specific
+  deployment, such as an older one.
+
+### Fixed
+
+- **Reporter skill: non-spend channel downloads.** The `_nonspend` and
+  `_non_spend_channels` downloads apply to all models with non-spend channels,
+  not only CPA models.
+
+- **Reporter skill: Swagger and report statuses.** Removed the note that the
+  Swagger spec puts `report_type` at the top level; it now shows it inside
+  `form`, as the API requires. Added the `canceled` report status.
+
 ## [1.9.0] - 2026-10-20
 
 ### Added

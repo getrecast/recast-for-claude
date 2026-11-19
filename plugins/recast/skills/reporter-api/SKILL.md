@@ -1,6 +1,6 @@
 ---
 name: reporter-api
-description: Use when pulling data or reports from the Recast Reporter API — "get channel ROI as CSV", "download attribution data", "export model results", "create a report via the API", "get the data behind this chart", "pull the saturation curve data", "download the ROI waterfall", "why is this channel's estimate uncertain", "get the daily marketing vs baseline series", "rebuild a Recast chart in my dashboard". Identifies the right report_type from what the user wants to analyze, prompts for required inputs, generates code to create/poll/download CSV results.
+description: Use when pulling data or reports from the Recast Reporter API — "get channel ROI as CSV", "download attribution data", "export model results", "create a report via the API", "get the data behind this chart", "pull the saturation curve data", "download the ROI waterfall", "why is this channel's estimate uncertain", "get the daily marketing vs baseline series", "rebuild a Recast chart in my dashboard", "include or exclude long-term brand effects". Identifies the right report_type from what the user wants to analyze, prompts for required inputs, generates code to create/poll/download CSV results.
 ---
 
 # Recast Reporter API — Matching Goals to Reports
@@ -14,7 +14,7 @@ You are helping a Recast client use the Reporter API programmatically. Your job 
 
 **What the downloads contain**: each report's downloads include the data behind every chart on that report in the app, not only its summary tables. If a client asks for "the numbers behind a chart", find the report that draws that chart and use its downloads. The one exception is the share of spend and effect chart on the Insights Overview report, which has no download.
 
-**Critical quirk**: `report_type` lives **inside** the `form` object, NOT at the top level of the request body. The Swagger spec says top-level — ignore that. Always put `report_type` inside `form`.
+**Critical quirk**: `report_type` lives **inside** the `form` object, NOT at the top level of the request body. Always put `report_type` inside `form`.
 
 ---
 
@@ -31,7 +31,7 @@ Don't ask about coding language. If they specify one, use it. Otherwise use Pyth
 Once you know the report type, ask for the required form fields (see Form Fields by Report Type). Explain each input in plain English — don't just list field names.
 
 You'll always need:
-- `deployment_id` — the numeric ID of the model deployment. If they don't know it, offer to look it up via the KPIs or Deployments endpoints.
+- `deployment_id` — the numeric ID of the model deployment. If they don't know it, offer to look it up via the KPIs or Deployments endpoints. By default the report runs against the dashboard's active deployment, not this one. If the client wants a specific (for example, older) deployment, also send `use_latest_deployments: false` (see Request Body Structure).
 - `report_type` — determined by step 1 (placed inside the form)
 
 ### 3. Confirm and generate code
@@ -88,7 +88,7 @@ Each description ends with the report's download keys. Parts in `{braces}` vary 
 ### compute_insights_overview
 Shows how much of the KPI each channel drove in the date range — broken down by total vs. direct impact, shifted vs. unshifted, with ROI and MROI. The primary channel attribution report. Start here for any "what's working?" question.
 
-**Downloads**: impact (shifted/unshifted × total/direct), ROI, MROI, plus `direct_contribution_by_channel` (each channel's direct contribution to the KPI, including Baseline and Total rows). CPA models with non-spend channels also get `_nonspend` versions of the summaries. The summary keys say `roi`/`mroi` even on CPA models.
+**Downloads**: impact (shifted/unshifted × total/direct), ROI, MROI, plus `direct_contribution_by_channel` (each channel's direct contribution to the KPI, including Baseline and Total rows). Models with non-spend channels also get `_nonspend` versions of the summaries. The summary keys say `roi`/`mroi` even on CPA models. Models with brand channels also get `_long_term` versions: `summaries-{total|direct}_long_term-{impact_shifted|impact_unshifted|roi|mroi}` and `direct_contribution_by_channel_long_term` (see Long-Term Effects of Brand Channels).
 
 ### compute_baseline_summary
 Shows the non-marketing (organic/baseline) contribution to KPI over time. Answers: "what would sales look like without any marketing?" Can include or exclude spike/promotional effects. Can be run into the future to see forecasted baseline.
@@ -96,9 +96,9 @@ Shows the non-marketing (organic/baseline) contribution to KPI over time. Answer
 **Downloads**: `summary_total`, `summary_monthly`, `summary_daily`.
 
 ### compare_shift_curves
-Shows the time-delay (adstock/carryover) between when a channel spends and when that spend's effect is realized. Day 0 is the spend date. Essential for understanding long-tail effects of TV or branded campaigns.
+Shows the time-delay (adstock/carryover) between when a channel spends and when that spend's effect is realized. Day 0 is the spend date. Essential for understanding long-tail effects of TV or branded campaigns. 
 
-**Downloads**: `all_shift_curves_summarized` (one row per channel × day offset × curve). The `curve` column is `cumulative` or `noncumulative`.
+**Downloads**: `all_shift_curves_summarized` (one row per channel × day offset × curve). The `curve` column is `cumulative` or `noncumulative`. With long-term effects on (the default), brand channels' curves run for many more days. Channels the model doesn't give a time shift return 422. 
 
 ### compute_spend_response_curves (Multi-Day Spend Response)
 Shows impact, ROI/CPA, and MROI/MCPA at different spend levels for selected channels, evaluated at a specific date over a lookback window of `num_days` days. Points are anchored to actual historical spend in that window. Useful for saturation and scaling analysis.
@@ -108,7 +108,7 @@ Shows impact, ROI/CPA, and MROI/MCPA at different spend levels for selected chan
 ### compare_time_periods
 Compares ROI/CPA, mROI/mCPA, baseline, in-period effect, and total outcome across two distinct time periods. Also provides channel-level comparison with % change and confidence intervals. The previous period must end strictly before the current period starts.
 
-**Downloads**: `summary-overall` (aggregate), `summary-time_table` (the two periods' date ranges and lengths), `spend_comparison`, `{metric}_comparison_spend_channels` and `m{metric}_comparison_spend_channels` (where `{metric}` is `roi` or `cpa`), and `in_period_effect_comparison`. CPA models with non-spend channels also get `_non_spend_channels` versions. `pct_change` is a rounded text value such as `-36%`.
+**Downloads**: `summary-overall` (aggregate), `summary-time_table` (the two periods' date ranges and lengths), `spend_comparison`, `{metric}_comparison_spend_channels` and `m{metric}_comparison_spend_channels` (where `{metric}` is `roi` or `cpa`), and `in_period_effect_comparison`. Models with non-spend channels also get `_non_spend_channels` versions. `pct_change` is a rounded text value such as `-36%`.
 
 ### compute_grouped_channel_summaries
 Channel performance report with user-defined groupings (e.g., "Paid Social", "TV & Audio"). Reports impact, ROI, and MROI for each group across daily/weekly/monthly/total granularities.
@@ -195,6 +195,8 @@ Exports model configuration tables: priors, ROI settings, shift parameters, spik
 
 **Downloads**: `tables-baseline`, `tables-roi`, `tables-shifts`, `tables-lift_tests`, `tables-spikes`, `tables-channel_linkings`, and `tables-subchannels` on models with subchannels.
 
+**Highlights**: `results.highlights.long_term_channels` lists the model's brand channels, whose long-term effects the model can attribute. It's an empty list when the model has none.
+
 ### compute_experiments_summaries
 Experiment results summary. Only available when experiments are configured on the deployment.
 
@@ -236,6 +238,8 @@ Diagnoses why a channel's estimate is uncertain. Each channel gets a lack-of-sig
 }
 ```
 
+`compute_period_summary` and `compute_marketing_vs_baseline` also take the optional `include_long_term_effects`. The other Group 2 reports don't (see Long-Term Effects of Brand Channels).
+
 ### Group 3 — Date Range + Channels
 `compute_roi_cpa_waterfall_plots`, `compute_upper_funnel_details`, `compute_prior_vs_posterior`, `compute_daily_spend_vs_kpi`
 
@@ -262,6 +266,8 @@ Diagnoses why a channel's estimate is uncertain. Each channel gets a lack-of-sig
 }
 ```
 
+Also takes the optional `include_long_term_effects`.
+
 ### Group 5 — Date Range + Granularity
 `compute_share_of_spend_vs_effect`
 
@@ -275,7 +281,7 @@ Diagnoses why a channel's estimate is uncertain. Each channel gets a lack-of-sig
 }
 ```
 
-`granularity` must be one of: `"daily"`, `"weekly"`, `"monthly"`.
+`granularity` must be one of: `"daily"`, `"weekly"`, `"monthly"`. Also takes the optional `include_long_term_effects`.
 
 ### Group 6 — Channels Only
 `compare_shift_curves`
@@ -287,6 +293,8 @@ Diagnoses why a channel's estimate is uncertain. Each channel gets a lack-of-sig
   "channels": ["meta_prospecting", "linear_tv"]
 }
 ```
+
+Also takes the optional `include_long_term_effects`.
 
 ### Group 7 — Single Date + num_days + Channels
 `compute_spend_response_curves`
@@ -337,7 +345,7 @@ Diagnoses why a channel's estimate is uncertain. Each channel gets a lack-of-sig
 }
 ```
 
-`include_lower_funnel_effects` is a **string** `"true"` or `"false"`. Each `channel_groups` entry needs a `name` and a non-empty `channels` array.
+`include_lower_funnel_effects` is a **string** `"true"` or `"false"`. Each `channel_groups` entry needs a `name` and a non-empty `channels` array. Also takes the optional `include_long_term_effects`, which is separate from `include_lower_funnel_effects`.
 
 ### Group 10 — Two Date Ranges
 `compare_time_periods`
@@ -353,7 +361,47 @@ Diagnoses why a channel's estimate is uncertain. Each channel gets a lack-of-sig
 }
 ```
 
-The previous period end date must come **strictly before** the current period start date. Overlapping or same dates return 422.
+The previous period end date must come **strictly before** the current period start date. Overlapping or same dates return 422. Also takes the optional `include_long_term_effects`.
+
+---
+
+## Long-Term Effects of Brand Channels
+
+Some models attribute a long-term effect to brand channels. This is effect that lands long after the spend and would otherwise be counted in the baseline. Seven report types take an optional form field, `include_long_term_effects`, that decides where that effect goes:
+
+`compute_grouped_channel_summaries`, `compute_baseline_summary`, `compute_marketing_vs_baseline`, `compare_time_periods`, `compute_share_of_spend_vs_effect`, `compute_period_summary`, `compare_shift_curves`
+
+| `include_long_term_effects` | Result |
+|---|---|
+| `"true"` | Each brand channel's long-term effect moves out of the baseline and onto the channel. |
+| `"false"` | The long-term effect stays in the baseline. |
+| not sent | Same as `"true"`: long-term effects are on by default. |
+
+Like `include_lower_funnel_effects`, it's a **string**, `"true"` or `"false"`.
+
+```json
+{
+  "deployment_id": 5716,
+  "report_type": "compute_marketing_vs_baseline",
+  "start_date": "2024-01-01",
+  "end_date": "2024-03-31",
+  "include_long_term_effects": "false"
+}
+```
+
+**What changes when long-term effects are on:** brand channels get more impact, so their ROI or CPA improves, and the baseline is smaller by the same amount. Total outcome and non-brand channels don't change. Brand channels' shift curves run for many more days.
+
+**Numbers can differ from older results:** because long-term effects are on by default, these reports can return different brand channel and baseline numbers than reports run before the field existed. If the client is comparing against older results, or wants the long-term effect kept in the baseline, send `"false"`.
+
+**Which channels are brand channels:** run `compute_model_configuration` and read `results.highlights.long_term_channels`. The Deployments endpoint doesn't list them. If the list is empty, the model has no brand channels. The field is still accepted, but the numbers don't change.
+
+**What a report applied:** `results.highlights.has_long_term_effects` is `true` when a report's numbers include long-term effects and `false` when they don't. When they do, each download's `description` ends in "with Long-Term Effects". Download keys stay the same, so check `has_long_term_effects` or the descriptions to tell the two apart.
+
+**Insights overview:** `compute_insights_overview` doesn't take the field; if you send it, the API drops it. On models with brand channels it returns both versions:
+- The standard downloads, plus `_long_term` versions of the summaries and of `direct_contribution_by_channel`.
+- `results.highlights.long_term`, which has the same `current_period`, `previous_period` and `previous_year` highlights with long-term effects included.
+
+For overview numbers that keep the long-term effect in the baseline, use the downloads without `_long_term`.
 
 ---
 
@@ -365,6 +413,7 @@ The create endpoint wraps the form:
 {
   "name": "string (optional)",
   "show_in_ui": false,
+  "use_latest_deployments": true,
   "form": {
     "deployment_id": 5716,
     "report_type": "...",
@@ -374,6 +423,16 @@ The create endpoint wraps the form:
 ```
 
 **`report_type` always goes inside `form`** — never at the top level.
+
+The top-level fields are all optional:
+
+| Field | Default | What it does |
+|---|---|---|
+| `name` | none | Display name for the report. |
+| `show_in_ui` | `false` | Whether the report shows in the app. |
+| `use_latest_deployments` | `true` | When `true`, the report runs against the dashboard's currently active deployment instead of the `deployment_id` in the form. Send `false` to run against the exact `deployment_id` you sent. |
+
+`use_latest_deployments` matters whenever the client names a deployment on purpose: an older deployment, a comparison across deployments, or reproducing an earlier result. Without `false`, those reports silently run on the latest deployment.
 
 ---
 
@@ -692,7 +751,7 @@ assert resp.status_code == 201, f"Failed: {resp.text}"
 
 ## Common Mistakes to Avoid
 
-1. **Putting `report_type` at the top level** — It belongs inside `form`. The Swagger spec shows it at top level; the actual API requires it in `form`. This is the most common cause of 400/422 errors.
+1. **Putting `report_type` at the top level** — It belongs inside `form`. This is the most common cause of 400/422 errors.
 
 2. **Forgetting `deployment_id`** — Every report requires `deployment_id` inside the form. It is not optional.
 
@@ -708,7 +767,7 @@ assert resp.status_code == 201, f"Failed: {resp.text}"
 
 8. **Empty `channels` array** — Reports that require channels (Groups 3, 6, 7, 8) return 422 if `channels` is an empty array.
 
-9. **Not polling for both statuses** — Both `"ready"` and `"processing"` mean the report is still running. Poll until status is neither.
+9. **Not polling for both statuses** — Both `"ready"` and `"processing"` mean the report is still running. Poll until status is neither. The report then ends as `"success"`, `"error"` or `"canceled"`.
 
 10. **Accessing `results` before success** — `results` is only present in the show response when `status == "success"`. Don't try to access `results.downloads` on a running or failed report.
 
@@ -732,6 +791,14 @@ assert resp.status_code == 201, f"Failed: {resp.text}"
 
 20. **Assuming every `report_type` has a pre-rendered version** — only the types marked "Yes" in the Report Type Reference table's "Pre-rendered?" column do. Check the `prerendered`-filtered list rather than assuming one exists for an arbitrary report_type.
 
+21. **Comparing against older results without setting `include_long_term_effects`:** Long-term effects are on by default, so brand channels and the baseline can differ from reports run before the field existed. Send `"false"` to keep the long-term effect in the baseline.
+
+22. **Sending `include_long_term_effects` to `compute_insights_overview`:** The overview doesn't take it, and the API drops it. Use the overview's `_long_term` downloads, or the downloads without `_long_term`, instead.
+
+23. **Telling long-term and standard results apart by download key:** Keys are the same either way. Check `results.highlights.has_long_term_effects`, or whether the download descriptions end in "with Long-Term Effects".
+
+24. **Expecting `deployment_id` alone to pick the deployment:** `use_latest_deployments` defaults to `true`, so the report runs against the dashboard's active deployment even if `deployment_id` names an older one. Send `use_latest_deployments: false` to run against a specific deployment.
+
 ---
 
 ## Code Generation Rules
@@ -743,6 +810,7 @@ assert resp.status_code == 201, f"Failed: {resp.text}"
 - All report endpoints are under `/v1/clients/{client_slug}/reports`.
 - Auth: Bearer token in the Authorization header.
 - Always set `show_in_ui = False` unless the client specifically asks to see results in the UI.
+- Set `use_latest_deployments = False` when the client wants a specific deployment rather than the dashboard's active one.
 - Include error handling that shows the response body on non-200/201 responses.
 - Poll for completion with a 30-second interval; add a timeout (for example, 15 minutes) to avoid infinite loops.
 - Check for both `"ready"` and `"processing"` statuses when polling.
@@ -809,7 +877,7 @@ Include pre-rendered reports (excluded by default): `GET /v1/clients/{client_slu
   "id": 123,
   "name": "string",
   "report_type": "string",
-  "status": "ready | processing | success | error",
+  "status": "ready | processing | success | error | canceled",
   "prerendered": false,
   "form": { "deployment_id": 5716, "report_type": "...", "..." : "..." },
   "created_at": "ISO8601",
@@ -817,12 +885,15 @@ Include pre-rendered reports (excluded by default): `GET /v1/clients/{client_slu
   "results": {
     "downloads": [
       { "description": "string", "key": "string" }
-    ]
+    ],
+    "highlights": {
+      "has_long_term_effects": true
+    }
   }
 }
 ```
 
-`results` is only present when `status == "success"`.
+`results` is only present when `status == "success"`. `highlights` carries summary values that vary by report type. `has_long_term_effects` appears on `compute_insights_overview`, `compute_model_configuration` and the seven reports that take `include_long_term_effects`.
 
 ### Download response
 
@@ -858,6 +929,7 @@ Table download keys return `text/csv`. Access with a plain GET — setting `Acce
 | "raw data / data export" | `compute_clean_data` |
 | "subchannel spend / spend mix within a channel" | `compute_subchannel_spend_over_time` |
 | "priors vs posteriors / did the priors change?" | `compute_prior_vs_posterior` |
+| "long-term brand effects / which channels are brand channels?" | `include_long_term_effects` on the seven reports in Long-Term Effects of Brand Channels; `compute_model_configuration` for the brand channel list |
 
 ## Resources
 
